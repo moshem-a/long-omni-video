@@ -32,7 +32,7 @@ export const MODELS = {
   ttsFallback: 'gemini-2.5-pro-preview-tts',
   // Generative "Generate a video" mode:
   omni: process.env.OMNI_MODEL || 'gemini-omni-1.1-flash', // per-shot text/image/reference -> video
-  image: 'gemini-3.6-flash-image', // synthetic character keyframe (subject ref)
+  image: process.env.IMAGE_MODEL || 'gemini-2.5-flash-image', // synthetic character keyframe (subject ref)
 };
 
 // "Generate a video" (Omni) mode. A minute is built from several short shots

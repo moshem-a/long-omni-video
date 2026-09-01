@@ -105,7 +105,7 @@ Omni produces a short clip per interaction, and it regenerates audio each time. 
 **1. The storyboard is planned first.** Before any pixels are generated, `gemini-3.6-flash` turns your concept into an ordered list of short shots, each with a self‑contained visual prompt, a narration line, and a duration that sums to your target length. You can edit any shot — change the visuals and only that shot regenerates.
 
 **2. Identity is locked by resending the subject on every shot.** Because the docs give no single "identity guarantee," I lean on two levers on *every* shot:
-- the **same subject‑reference images** (either your uploaded photos or a synthetic keyframe from `gemini-3.6-flash-image`), sent as image parts each call, and
+- the **same subject‑reference images** (either your uploaded photos or a synthetic keyframe from `gemini-2.5-flash-image`), sent as image parts each call, and
 - the **character description embedded in every shot prompt**.
 
 A subtle Omni 1.1 constraint shapes this: `previous_interaction_id` and a `video_config.task` are **mutually exclusive** — pass both and Omni returns a 400. Since every shot needs a task (`reference_to_video`, `image_to_video`, or `text_to_video`), I don't rely on stateful chaining at all; the reference images *are* the continuity thread. That's exactly why uploading your photos matters so much.
@@ -169,7 +169,7 @@ ffmpeg -i shot.mp4 -i narration.wav \
 |---|---|
 | Video generation | **Gemini Omni 1.1** (`gemini-omni-1.1-flash`), 720p, per‑shot |
 | Analysis & storyboard | `gemini-3.6-flash` |
-| Character keyframe | `gemini-3.6-flash-image` |
+| Character keyframe | `gemini-2.5-flash-image` |
 | Voice | `gemini-3.1-flash-tts-preview` (locked narrator) |
 | Assembly | ffmpeg (cut, time‑stretch, captions, music, mux) |
 | Storage | Cloud Storage via v4 signed URLs |
@@ -201,7 +201,7 @@ PRE-PUBLICATION CHECKLIST (remove before posting):
 - [ ] Editorial sign-off if submitting to the Google Cloud publication.
 - [ ] Open-source / sample-code review completed before linking the public repo.
 - [ ] Confirm final model IDs are current at publish time (Omni 1.1, gemini-3.6-flash,
-      gemini-3.6-flash-image, gemini-3.1-flash-tts-preview) — model availability shifts.
+      gemini-2.5-flash-image, gemini-3.1-flash-tts-preview) — model availability shifts.
 - [ ] Replace the Mermaid block with the exported architecture.svg image on Medium
       (Medium does not render Mermaid inline).
 - [ ] No secrets, internal URLs, or customer data in screenshots or snippets.

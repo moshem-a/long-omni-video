@@ -98,9 +98,9 @@
 
   <rect class="card2" x="802" y="298" width="190" height="86" rx="10" stroke="#8a6dff"/>
   <text class="t" x="816" y="320" font-size="13">Gemini API</text>
-  <text class="m" x="816" y="338" font-size="11" fill="#d3c2ff">Omni 1.1 (video)</text>
-  <text class="m" x="816" y="354" font-size="11">3.6-flash (text/image)</text>
-  <text class="m" x="816" y="370" font-size="11">3.1-flash-tts (voice)</text>
+  <text class="m" x="816" y="336" font-size="11" fill="#d3c2ff">Omni 1.1 (video)</text>
+  <text class="m" x="816" y="352" font-size="11">3.6-flash (text)</text>
+  <text class="m" x="816" y="368" font-size="11">2.5-flash-image · 3.1-tts</text>
 
   <!-- Edges -->
   <path class="edge-a" d="M258 200 H330" marker-end="url(#arw)"/>
