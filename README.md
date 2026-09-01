@@ -1,4 +1,18 @@
-# AI Video Editor — casual → professional
+# Long Omni Video — generate 60s videos with a consistent person, using Gemini Omni 1.1
+
+**🚀 Live demo:** **[ai-video-editor-880601596687.us-central1.run.app](https://ai-video-editor-880601596687.us-central1.run.app/)** — bring your own Gemini key, no sign-up.
+
+Gemini **Omni 1.1** produces short clips per call. This app chains many shots — reusing
+**your uploaded photos** (or an invented character) as a subject reference on every shot —
+to build a **coherent video up to 60 seconds** where the same person appears in every shot
+with one consistent voice. It also does classic **upload-and-polish** editing. No login: your
+API key stays in your browser.
+
+📖 **Read the write-up:** [`docs/medium-article.md`](docs/medium-article.md) · 🗺️ **Architecture:** [`docs/architecture.svg`](docs/architecture.svg)
+
+![System architecture](docs/architecture.svg)
+
+---
 
 Two modes in one app:
 

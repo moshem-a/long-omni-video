@@ -48,6 +48,30 @@
     </div>
   </section>
 
+  <!-- Mode chooser: shown once a key is set -->
+  <section class="gate hidden" id="modeChooser">
+    <div class="chooser">
+      <h2 class="chooser-title">What do you want to make?</h2>
+      <p class="muted center">Pick one — you can switch any time from the top bar.</p>
+      <div class="chooser-cards">
+        <button class="choice-card" type="button" data-choose="edit">
+          <div class="choice-icon">✂️</div>
+          <h3>Edit a video</h3>
+          <p>Upload your own video and get a clean cut with a new, professional AI
+             voice — same footage, sharper delivery.</p>
+          <span class="choice-cta">Edit an upload →</span>
+        </button>
+        <button class="choice-card" type="button" data-choose="generate">
+          <div class="choice-icon">🎬</div>
+          <h3>Generate a video</h3>
+          <p>Describe an idea and generate a video up to 1 minute where the same
+             person appears — same face, same voice — in every shot.</p>
+          <span class="choice-cta">Generate a video →</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
   <ol class="steps hidden" id="steps">
     <li data-step="upload">Upload</li>
     <li data-step="analyze">Analyze</li>

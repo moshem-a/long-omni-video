@@ -213,6 +213,27 @@ button.danger:hover { background: #3a1d22; }
 .mode-btn { border: none; background: transparent; color: var(--muted); padding: 6px 14px; font-size: 13px; border-radius: 999px; }
 .mode-btn.active { background: linear-gradient(180deg, var(--accent), var(--accent-2)); color: white; font-weight: 600; }
 
+/* Mode chooser (shown after the key is set) */
+.chooser { width: 100%; max-width: 860px; }
+.chooser-title { text-align: center; font-size: 28px; margin: 0 0 4px; }
+.chooser-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 24px; }
+.choice-card {
+  display: flex; flex-direction: column; align-items: flex-start; text-align: left;
+  gap: 10px; padding: 28px 24px; border-radius: 16px;
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  cursor: pointer; transition: border-color .15s, transform .15s, box-shadow .15s;
+}
+.choice-card:hover { border-color: var(--accent); transform: translateY(-3px); box-shadow: 0 8px 30px rgba(109,139,255,.18); }
+.choice-icon { font-size: 40px; line-height: 1; }
+.choice-card h3 { margin: 0; font-size: 20px; }
+.choice-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.choice-cta {
+  margin-top: auto; padding-top: 12px; font-weight: 600; font-size: 14px;
+  color: transparent; background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text;
+}
+@media (max-width: 640px) { .chooser-cards { grid-template-columns: 1fr; } }
+
 /* Generate: brief form */
 .field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 .field > b { font-size: 14px; }

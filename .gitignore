@@ -6,5 +6,5 @@ node_modules/
 /out/
 *.log
 .DS_Store
-# Belongs to the separate Interview Studio project, not this repo.
-/interview-studio-medium-post.html
+# Stray Medium article HTML files from other projects (kept out of this repo).
+/*-medium-post.html

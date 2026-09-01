@@ -80,6 +80,9 @@ function reachable(step) {
 }
 
 function show(step) {
+  // Leaving the key gate / mode chooser behind whenever we enter the wizard.
+  $('#gateKey').classList.add('hidden');
+  $('#modeChooser').classList.add('hidden');
   $('#app').classList.remove('hidden');
   $('#steps').classList.toggle('hidden', state.mode !== 'edit');
   $('#stepsGen').classList.toggle('hidden', state.mode !== 'generate');
@@ -123,7 +126,17 @@ function showGate(name) {
   $('#app').classList.add('hidden');
   $('#steps').classList.add('hidden');
   $('#stepsGen').classList.add('hidden');
+  $('#modeChooser').classList.add('hidden');
   $('#gateKey').classList.toggle('hidden', name !== 'key');
+}
+
+// Big "what do you want to make?" screen shown once a key is set.
+function showChooser() {
+  $('#app').classList.add('hidden');
+  $('#steps').classList.add('hidden');
+  $('#stepsGen').classList.add('hidden');
+  $('#gateKey').classList.add('hidden');
+  $('#modeChooser').classList.remove('hidden');
 }
 
 function showError(msg) {
@@ -199,6 +212,27 @@ document.querySelectorAll('.mode-btn').forEach((btn) => {
   btn.addEventListener('click', () => setMode(btn.dataset.mode));
 });
 
+// Big mode-chooser cards: pick a mode and enter its first step.
+document.querySelectorAll('.choice-card').forEach((card) => {
+  card.addEventListener('click', () => chooseMode(card.dataset.choose));
+});
+
+// Enter a mode from the chooser (starts fresh; also syncs the topbar switch).
+function chooseMode(mode) {
+  state.mode = mode;
+  document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  stopPolling();
+  state.jobId = null;
+  state.analysis = null;
+  state.storyboard = null;
+  state.brief = null;
+  state.job = null;
+  state.voice = 'Kore';
+  state.options = { ...DEFAULT_OPTIONS };
+  clearError();
+  show(mode === 'generate' ? 'brief' : 'upload');
+}
+
 // Switch wizards. Resets to the new mode's first step with a clean slate.
 function setMode(mode) {
   if (state.mode === mode) return;
@@ -230,7 +264,7 @@ async function afterAuth() {
     $('#account').classList.remove('hidden'); // History / Change key / Remove key
     if (me.hasKey) {
       $('#modeSwitch').classList.remove('hidden');
-      show(state.mode === 'generate' ? 'brief' : 'upload');
+      showChooser();
     } else {
       showGate('key');
     }
@@ -253,13 +287,13 @@ $('#saveKeyBtn').addEventListener('click', async () => {
       $('#keyStatus').textContent = parseErr(await res.text());
       return;
     }
-    // Validated: keep it on this device only and reveal the app.
+    // Validated: keep it on this device only and reveal the mode chooser.
     localStorage.setItem(KEY_LS, apiKey);
     $('#keyInput').value = '';
     $('#keyStatus').textContent = '';
     $('#account').classList.remove('hidden');
     $('#modeSwitch').classList.remove('hidden');
-    show(state.mode === 'generate' ? 'brief' : 'upload');
+    showChooser();
   } catch (err) {
     $('#keyStatus').textContent = 'Failed: ' + err.message;
   }
