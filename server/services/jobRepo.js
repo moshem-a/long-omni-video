@@ -59,7 +59,7 @@ function fromFirestore(data) {
     ...data,
     createdAt,
     updatedAt: undefined,
-    apiKey: null, // never persisted; re-attached from keystore on render
+    apiKey: null, // never persisted; re-attached from the request header on render
     paths: { dir: jobDir(data.id) },
   };
 }

@@ -1,8 +1,9 @@
 // AI Video Editor frontend.
-// Identity comes from IAP (the user already signed in with Google at the edge).
-// Flow: per-user key gate -> upload (signed URL to GCS) -> analyze -> review ->
-// voice -> options -> render -> download. Steps are freely navigable, and past
-// runs can be reopened from History and re-edited / re-rendered.
+// No login: the user pastes their own Gemini API key, which is kept in this
+// browser (localStorage) and sent with each request; the server never stores it.
+// Flow: key gate -> upload (signed URL to GCS) -> analyze -> review -> voice ->
+// options -> render -> download. Steps are freely navigable, and past runs can be
+// reopened from History (scoped to this browser) and re-edited / re-rendered.
 
 const DEFAULT_OPTIONS = { burnCaptions: false, musicTrackId: 'none', musicGainDb: -22, videoFitMode: 'stretch' };
 
@@ -123,7 +124,6 @@ function showGate(name) {
   $('#steps').classList.add('hidden');
   $('#stepsGen').classList.add('hidden');
   $('#gateKey').classList.toggle('hidden', name !== 'key');
-  $('#gateSignin').classList.toggle('hidden', name !== 'signin');
 }
 
 function showError(msg) {
@@ -147,85 +147,40 @@ function parseErr(text) {
   }
 }
 
-// ---------- Auth (Firebase Auth, with IAP fallback) ----------
-// Two deployments share this frontend:
-//   - Public host: the user signs in with Firebase (Google) and we attach the
-//     ID token as a Bearer header on every API call.
-//   - Org SSO host: IAP authenticates at the edge (cookie), no client login —
-//     authMode comes back 'iap' from /api/config and we skip Firebase.
-let firebaseMod = null; // the firebase-auth module (loaded on demand)
-let firebaseAuthInstance = null;
-let authMode = 'iap';
+// ---------- No accounts: the key lives in this browser ----------
+// The user pastes their Gemini API key once; we keep it in localStorage on this
+// device and send it with every request (x-gemini-key). The server never stores
+// it — it stays in memory only for the life of a job. A random per-browser id
+// (x-client-id) scopes this browser's job history. No login, no sign-up.
+const KEY_LS = 'gemini_api_key';
+const CID_LS = 'client_id';
 
-// Attach the current Firebase ID token when signed in; otherwise rely on the
-// IAP cookie (sent automatically). getIdToken() refreshes an expired token.
-async function authedFetch(url, opts = {}) {
-  const headers = { ...(opts.headers || {}) };
-  const user = firebaseAuthInstance?.currentUser;
-  if (user) {
-    try {
-      headers.Authorization = `Bearer ${await user.getIdToken()}`;
-    } catch {
-      /* fall through unauthenticated -> server returns 401 -> gate */
-    }
+function clientId() {
+  let cid = localStorage.getItem(CID_LS);
+  if (!cid) {
+    cid = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    localStorage.setItem(CID_LS, cid);
   }
+  return cid;
+}
+const getStoredKey = () => localStorage.getItem(KEY_LS) || '';
+
+// Attach this browser's locally-stored key and id to every API call.
+async function authedFetch(url, opts = {}) {
+  const headers = { ...(opts.headers || {}), 'x-client-id': clientId() };
+  const key = getStoredKey();
+  if (key) headers['x-gemini-key'] = key;
   return fetch(url, { ...opts, headers });
 }
 
-// Load the public config and, if Firebase is configured, initialize the SDK.
-async function initFirebase() {
-  try {
-    const cfg = await (await fetch('/api/config')).json();
-    authMode = cfg.authMode || 'iap';
-    const fb = cfg.firebase || {};
-    if (!fb.apiKey) return null; // IAP / dev deployment: no client login
-    const [{ initializeApp }, authModule] = await Promise.all([
-      import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js'),
-      import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js'),
-    ]);
-    firebaseMod = authModule;
-    firebaseAuthInstance = authModule.getAuth(initializeApp(fb));
-    return firebaseAuthInstance;
-  } catch (err) {
-    console.warn('Firebase init skipped:', err);
-    return null;
-  }
-}
-
-$('#googleSignInBtn').addEventListener('click', async () => {
-  if (!firebaseAuthInstance) return;
-  $('#signinStatus').textContent = 'Opening Google sign-in…';
-  try {
-    await firebaseMod.signInWithPopup(firebaseAuthInstance, new firebaseMod.GoogleAuthProvider());
-    $('#signinStatus').textContent = '';
-  } catch (err) {
-    $('#signinStatus').textContent = err.message || 'Sign-in failed';
-  }
-});
-
-// "Try without signing in": Firebase Anonymous Auth gives a uid (so the keystore
-// and job pipeline work unchanged) without any account or sign-up. The user still
-// provides their own Gemini key; guest sessions are ephemeral (no durable history).
-$('#guestBtn').addEventListener('click', async () => {
-  if (!firebaseAuthInstance) return;
-  $('#signinStatus').textContent = 'Starting a guest session…';
-  try {
-    await firebaseMod.signInAnonymously(firebaseAuthInstance);
-    $('#signinStatus').textContent = '';
-  } catch (err) {
-    $('#signinStatus').textContent =
-      /admin-restricted|operation-not-allowed/i.test(err.code || err.message || '')
-        ? 'Guest access is not enabled for this app.'
-        : (err.message || 'Could not start guest session');
-  }
-});
-
-$('#logoutBtn').addEventListener('click', async (e) => {
-  if (firebaseAuthInstance) {
-    e.preventDefault(); // Firebase deployments sign out client-side, not via IAP
-    await firebaseMod.signOut(firebaseAuthInstance);
-    location.reload();
-  }
+// Remove the key from this device (there is nothing stored on the server).
+$('#removeKeyBtn').addEventListener('click', () => {
+  localStorage.removeItem(KEY_LS);
+  $('#account').classList.add('hidden');
+  $('#modeSwitch').classList.add('hidden');
+  $('#keyInput').value = '';
+  $('#keyStatus').textContent = 'Key removed from this device.';
+  showGate('key');
 });
 
 $('#changeKeyBtn').addEventListener('click', () => {
@@ -261,31 +216,18 @@ function setMode(mode) {
   show(mode === 'generate' ? 'brief' : 'upload');
 }
 
-// Boot: resolve auth mode first. On a Firebase deployment we wait for the sign-in
-// state; on an IAP/dev deployment we go straight to the key/app gate.
-async function boot() {
-  await initFirebase();
-  if (firebaseAuthInstance) {
-    firebaseMod.onAuthStateChanged(firebaseAuthInstance, (user) => {
-      if (user) afterAuth();
-      else showGate('signin');
-    });
-  } else {
-    afterAuth(); // IAP or dev: identity comes from the edge
-  }
+// Boot: no login. If this browser already has a key, go straight to the app;
+// otherwise show the key gate.
+function boot() {
+  if (getStoredKey()) afterAuth();
+  else showGate('key');
 }
 
-// Once authenticated, decide between the key gate and the wizard.
+// With a key present, decide between the key gate and the wizard.
 async function afterAuth() {
   try {
     const me = await (await authedFetch('/api/me')).json();
-    // Show the account bar (History / Change key / Log out) for signed-in users
-    // and guests alike. Anonymous guests have no email -> label them "Guest".
-    const isGuest = firebaseAuthInstance?.currentUser?.isAnonymous;
-    if (me.email || isGuest) {
-      $('#account').classList.remove('hidden');
-      $('#accountEmail').textContent = me.email || 'Guest';
-    }
+    $('#account').classList.remove('hidden'); // History / Change key / Remove key
     if (me.hasKey) {
       $('#modeSwitch').classList.remove('hidden');
       show(state.mode === 'generate' ? 'brief' : 'upload');
@@ -311,8 +253,11 @@ $('#saveKeyBtn').addEventListener('click', async () => {
       $('#keyStatus').textContent = parseErr(await res.text());
       return;
     }
+    // Validated: keep it on this device only and reveal the app.
+    localStorage.setItem(KEY_LS, apiKey);
     $('#keyInput').value = '';
     $('#keyStatus').textContent = '';
+    $('#account').classList.remove('hidden');
     $('#modeSwitch').classList.remove('hidden');
     show(state.mode === 'generate' ? 'brief' : 'upload');
   } catch (err) {

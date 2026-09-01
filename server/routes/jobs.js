@@ -7,7 +7,6 @@ import {
 } from '../jobs/jobStore.js';
 import { runAnalyze, enqueueRender, runStoryboard, enqueueGenerate } from '../jobs/pipeline.js';
 import { DEFAULT_VOICE, DEFAULT_ASPECT, MAX_GENERATE_DURATION_SEC, SHOT_MIN_SEC } from '../config.js';
-import { hasKey, getKey } from '../services/keystore.js';
 import {
   signedUploadUrl, signedReadUrl, downloadToFile, deleteObject,
 } from '../services/storage.js';
@@ -44,7 +43,7 @@ router.get('/', async (req, res, next) => {
 // POST /api/jobs -> create job + return a signed upload URL for the source video.
 router.post('/', async (req, res, next) => {
   try {
-    if (!(await hasKey(req.uid))) {
+    if (!req.apiKey) {
       return res.status(400).json({ error: 'Set your Gemini API key before uploading' });
     }
     const job = createJob({ uid: req.uid, status: 'awaiting-upload' });
@@ -62,7 +61,7 @@ router.post('/', async (req, res, next) => {
 // characters, returns signed URLs to PUT the reference photos to GCS.
 router.post('/generate', async (req, res, next) => {
   try {
-    if (!(await hasKey(req.uid))) {
+    if (!req.apiKey) {
       return res.status(400).json({ error: 'Set your Gemini API key before generating' });
     }
     const b = req.body?.brief || {};
@@ -123,7 +122,7 @@ router.post('/:id/storyboard/start', async (req, res, next) => {
     if (job.kind !== 'generate' || !job.brief) {
       return res.status(400).json({ error: 'Not a generate job' });
     }
-    const apiKey = await getKey(req.uid);
+    const apiKey = req.apiKey;
     if (!apiKey) return res.status(400).json({ error: 'Set your Gemini API key first' });
     updateJob(job.id, { apiKey });
     runStoryboard(getJob(job.id));
@@ -175,7 +174,7 @@ router.post('/:id/generate/start', async (req, res, next) => {
     if (!job.storyboard?.shots?.length) {
       return res.status(400).json({ error: 'No storyboard to generate yet' });
     }
-    const apiKey = job.apiKey || (await getKey(req.uid));
+    const apiKey = job.apiKey || req.apiKey;
     if (!apiKey) return res.status(400).json({ error: 'Set your Gemini API key first' });
     updateJob(job.id, {
       apiKey,
@@ -215,7 +214,7 @@ router.post('/:id/start', async (req, res, next) => {
     const job = await ownedJob(req, res);
     if (!job) return;
 
-    const apiKey = await getKey(req.uid);
+    const apiKey = req.apiKey;
     if (!apiKey) return res.status(400).json({ error: 'Set your Gemini API key first' });
 
     const localSource = path.join(jobDir(job.id), 'source.mp4');
@@ -283,7 +282,7 @@ router.post('/:id/render', async (req, res, next) => {
 
     // The render runs in the background, possibly after the request returns, so
     // re-attach the key in memory in case the job was rehydrated from disk.
-    const apiKey = job.apiKey || (await getKey(req.uid));
+    const apiKey = job.apiKey || req.apiKey;
     if (!apiKey) return res.status(400).json({ error: 'Set your Gemini API key first' });
 
     // Reopened run: the local /tmp copy is gone — pull the source back from GCS.

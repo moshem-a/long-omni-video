@@ -1,7 +1,6 @@
 import express from 'express';
 import { VOICES } from '../config.js';
 import { synthesizeSpeech } from '../services/gemini.js';
-import { getKey } from '../services/keystore.js';
 import { wrapWavHeader } from '../util/pcm.js';
 import { withRetry } from '../util/retry.js';
 
@@ -23,7 +22,7 @@ router.post('/preview', async (req, res, next) => {
       return res.status(400).json({ error: `Unknown voice: ${voice}` });
     }
     const text = (req.body?.text || SAMPLE_TEXT).toString().slice(0, 300);
-    const apiKey = await getKey(req.uid);
+    const apiKey = req.apiKey;
     if (!apiKey) return res.status(400).json({ error: 'Set your Gemini API key first' });
     const pcm = await withRetry(() => synthesizeSpeech(apiKey, text, voice), { label: 'preview' });
     const wav = wrapWavHeader(pcm);

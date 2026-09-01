@@ -1,19 +1,17 @@
 import express from 'express';
-import { setKey, hasKey, clearKey } from '../services/keystore.js';
 import { validateKey } from '../services/gemini.js';
 
 const router = express.Router();
 
-// GET /api/me -> account info + whether a Gemini key is on file (never the key).
-router.get('/', async (req, res, next) => {
-  try {
-    res.json({ uid: req.uid, email: req.email, hasKey: await hasKey(req.uid) });
-  } catch (err) {
-    next(err);
-  }
+// GET /api/me -> whether this request carries a usable Gemini key. The key lives
+// only in the caller's browser; the server stores nothing.
+router.get('/', (req, res) => {
+  res.json({ hasKey: Boolean(req.apiKey) });
 });
 
-// PUT /api/me/key { apiKey } -> validate, encrypt, store.
+// PUT /api/me/key { apiKey } -> validate the key against Gemini and report back.
+// We do NOT store it; the browser keeps it in localStorage and sends it per
+// request. This endpoint only confirms the key works before the app unlocks.
 router.put('/key', async (req, res, next) => {
   try {
     const apiKey = (req.body?.apiKey || '').toString().trim();
@@ -22,21 +20,16 @@ router.put('/key', async (req, res, next) => {
     const check = await validateKey(apiKey);
     if (!check.ok) return res.status(400).json({ error: `Key rejected: ${check.error}` });
 
-    await setKey(req.uid, apiKey);
     res.json({ hasKey: true });
   } catch (err) {
     next(err);
   }
 });
 
-// DELETE /api/me/key -> remove the stored key.
-router.delete('/key', async (req, res, next) => {
-  try {
-    await clearKey(req.uid);
-    res.json({ hasKey: false });
-  } catch (err) {
-    next(err);
-  }
+// DELETE /api/me/key -> nothing to delete server-side; the browser clears its own
+// copy. Kept for API symmetry.
+router.delete('/key', (_req, res) => {
+  res.json({ hasKey: false });
 });
 
 export default router;

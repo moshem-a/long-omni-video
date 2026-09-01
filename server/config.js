@@ -17,18 +17,11 @@ fs.mkdirSync(JOBS_DIR, { recursive: true });
 
 export const PORT = Number(process.env.PORT) || 9002;
 
-// Per-user Gemini keys are stored in Firestore (encrypted); there is no global key.
+// No accounts: each request brings its own Gemini key (x-gemini-key), held in
+// memory only. Nothing per-user is stored, so there is no global/encryption key.
 export const GCS_BUCKET = process.env.GCS_BUCKET || '';
-export const KEY_ENC_SECRET = process.env.KEY_ENC_SECRET || '';
+// DEV_NO_AUTH=1 lets requests without a key header fall back to GEMINI_API_KEY.
 export const DEV_NO_AUTH = process.env.DEV_NO_AUTH === '1';
-
-// Public Firebase web config served to the browser via GET /api/config.
-export const FIREBASE_WEB_CONFIG = {
-  apiKey: process.env.FIREBASE_API_KEY || '',
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || '',
-  projectId: process.env.FIREBASE_PROJECT_ID || '',
-  appId: process.env.FIREBASE_APP_ID || '',
-};
 
 // Gemini models. The 2.5-flash-preview-tts model intermittently emits text
 // instead of audio ("Model tried to generate text"); 3.1-flash-tts is reliable,

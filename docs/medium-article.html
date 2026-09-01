@@ -67,7 +67,7 @@
     <span class="tag">Gemini TTS</span>
     <span class="tag">Node / Express</span>
     <span class="tag">FFmpeg</span>
-    <span class="tag">Firebase Auth</span>
+    <span class="tag">Bring-your-own-key</span>
     <span class="tag">Cloud Run</span>
     <span class="tag">Firestore</span>
   </p>
@@ -103,7 +103,7 @@
       <!-- Browser -->
       <rect class="box" x="330" y="20" width="240" height="60" rx="12"/>
       <text class="lbl" x="450" y="45" text-anchor="middle">Browser — wizard UI</text>
-      <text class="sub" x="450" y="64" text-anchor="middle">Firebase sign-in · bring-your-own-key</text>
+      <text class="sub" x="450" y="64" text-anchor="middle">no login · key kept in localStorage</text>
 
       <line class="flow" x1="450" y1="80" x2="450" y2="112" marker-end="url(#arrow)"/>
 
@@ -111,15 +111,15 @@
       <rect x="60" y="120" width="780" height="230" rx="16" fill="#fafbff" stroke="#e4e2ff" stroke-width="1.5"/>
       <text class="grp" x="80" y="142">NODE / EXPRESS ON CLOUD RUN</text>
 
-      <!-- Auth -->
+      <!-- Key middleware -->
       <rect class="box" x="80" y="156" width="230" height="52" rx="12"/>
-      <text class="lbl" x="195" y="180" text-anchor="middle">Auth middleware</text>
-      <text class="sub" x="195" y="197" text-anchor="middle">Firebase ID token · or IAP JWT</text>
+      <text class="lbl" x="195" y="180" text-anchor="middle">Key middleware</text>
+      <text class="sub" x="195" y="197" text-anchor="middle">x-gemini-key → memory only</text>
 
-      <!-- Keystore -->
+      <!-- No storage -->
       <rect class="box" x="335" y="156" width="230" height="52" rx="12"/>
-      <text class="lbl" x="450" y="180" text-anchor="middle">Encrypted keystore</text>
-      <text class="sub" x="450" y="197" text-anchor="middle">AES-256-GCM key per user</text>
+      <text class="lbl" x="450" y="180" text-anchor="middle">No key storage</text>
+      <text class="sub" x="450" y="197" text-anchor="middle">key stays in the browser</text>
 
       <!-- Job queue -->
       <rect class="box" x="590" y="156" width="230" height="52" rx="12"/>
@@ -157,41 +157,33 @@
       <rect x="300" y="504" width="300" height="46" rx="12" fill="url(#g1)"/>
       <text class="lbl" x="450" y="532" text-anchor="middle" fill="#ffffff">Downloadable MP4</text>
     </svg>
-    <figcaption>One build, two front-half pipelines, shared spine: auth → keystore → queue → TTS → FFmpeg.</figcaption>
+    <figcaption>One build, two front-half pipelines, shared spine: per-request key → queue → TTS → FFmpeg.</figcaption>
   </figure>
 
-  <h2>The product decision that shapes the architecture: bring your own key</h2>
-  <p>Most AI demos put the developer's API key on the server and eat the cost. That does not survive contact with "open it to everyone in the world." So the app flips it: <strong>each user signs in and pastes their own Gemini API key.</strong> They get one free at <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>.</p>
+  <h2>The product decision that shapes the architecture: bring your own key, no login</h2>
+  <p>Most AI demos put the developer's API key on the server and eat the cost. That does not survive contact with "open it to everyone in the world." So the app flips it: <strong>there are no accounts at all — each visitor pastes their own Gemini API key,</strong> free from <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>. The key is kept in the browser's <code>localStorage</code>, sent with each request, and the server never stores it.</p>
   <p>This has three consequences that ripple through the whole design:</p>
   <ul>
     <li><b>No shared quota or bill.</b> Usage is billed to whoever runs the job. The app can be genuinely public.</li>
-    <li><b>Keys must be stored safely.</b> Each key is encrypted with AES-256-GCM before it touches disk and stored in Firestore as <code>base64(iv).base64(tag).base64(ciphertext)</code>. The decryption secret lives in Secret Manager, never in the repo. The plaintext key exists only in memory, only while a job runs, and is re-attached from the keystore at each pipeline entry point — never persisted onto the job record.</li>
-    <li><b>Identity is required.</b> You can't have per-user keys without per-user accounts.</li>
+    <li><b>Nothing to secure at rest.</b> Because the key lives on the user's device and is transmitted per request, there is no server-side keystore, no encryption secret, and no database of user secrets to leak. The server holds the plaintext key in memory only, for the life of a single job, then drops it.</li>
+    <li><b>No accounts needed.</b> A random per-browser id (<code>x-client-id</code>) is enough to scope each browser's job history — no sign-up, no password, no identity provider.</li>
   </ul>
 
   <div class="callout">
-    <b>Security note.</b> A user's plaintext key is never written to disk or logged, never returned to the browser after it is saved, and never stored on the job object. It is decrypted on demand, held in memory for the duration of a single job, and dropped.
+    <b>Security note.</b> The key is never written to disk, never logged, never persisted onto the job record, and never mirrored to the database. It arrives in the <code>x-gemini-key</code> header, is attached to the in-memory job for the duration of the run, and is discarded. The user can remove it from their device at any time with one click.
   </div>
 
-  <h2>One build, two ways to sign in</h2>
-  <p>The same container runs in two very different environments, so authentication is dual-mode. A single public endpoint, <code>GET /api/config</code>, tells the frontend which mode is live:</p>
-  <ul>
-    <li><b>Firebase Authentication</b> for the public deployment. The browser shows "Continue with Google," anyone can sign up, and the client sends the Firebase ID token as <code>Authorization: Bearer &lt;token&gt;</code>. The server verifies it with the Firebase Admin SDK.</li>
-    <li><b>Identity-Aware Proxy (IAP)</b> for a private, org-SSO deployment. Google signs a JWT into <code>x-goog-iap-jwt-assertion</code>; the server verifies it against Google's IAP public keys. No login UI needed.</li>
-  </ul>
-  <p>Whichever header is present wins, and the rest of the app only ever sees a stable <code>req.uid</code>. The per-user keystore and history key off that id identically in both worlds.</p>
+  <h2>No login at all</h2>
+  <p>Dropping accounts collapses a whole layer of the system. There is no identity provider, no session, no token verification — the "auth" middleware does one small thing: it reads the caller's key and a per-browser id off the request headers and hangs them on <code>req</code>. Everything downstream — the job queue, the pipeline, the history — only ever sees a plain <code>req.apiKey</code> and <code>req.uid</code>.</p>
 
-<pre><code>export async function requireAuth(req, res, next) {
-  const authz = req.headers.authorization || '';
-  if (authz.startsWith('Bearer ')) {
-    const decoded = await firebaseAuth().verifyIdToken(authz.slice(7).trim());
-    req.uid = decoded.uid; req.email = decoded.email || null;
-    return next();
-  }
-  const assertion = req.headers['x-goog-iap-jwt-assertion'];
-  if (assertion) { /* verify IAP JWT → req.uid = payload.sub */ }
-  return res.status(401).json({ error: 'Sign-in required' });
+<pre><code>export function attachIdentity(req, _res, next) {
+  // The browser holds the user's Gemini key and sends it per request.
+  req.apiKey = (req.headers['x-gemini-key'] || '').trim() || null;
+  // A random per-browser id scopes this browser's job history. No login.
+  req.uid = (req.headers['x-client-id'] || '').trim() || 'anon';
+  next();
 }</code></pre>
+  <p>Saving a key is just a validation round-trip: the browser posts it once, the server calls Gemini to confirm it works, and on success the browser stores it locally. The server keeps nothing.</p>
 
   <h2>Edit mode: the sync trick</h2>
   <p>Replacing a rambling voice track with clean TTS creates an obvious problem — the new narration is a different length than the original speech, so lips, cuts, and captions drift out of sync. The fix is structural rather than clever:</p>
@@ -235,16 +227,16 @@
     <tr><td>Video generation</td><td>Gemini Omni 1.1 (<code>gemini-omni-1.1-flash</code>)</td></tr>
     <tr><td>Voice</td><td>Gemini TTS (one locked narrator)</td></tr>
     <tr><td>Assembly</td><td>FFmpeg (time-stretch, concat, captions, music)</td></tr>
-    <tr><td>Auth</td><td>Firebase Auth (public) or IAP (org SSO)</td></tr>
-    <tr><td>Storage</td><td>Cloud Storage (media) + Firestore (state, encrypted keys)</td></tr>
+    <tr><td>Auth</td><td>None — bring your own key (kept in the browser)</td></tr>
+    <tr><td>Storage</td><td>Cloud Storage (media) + Firestore (per-browser job state)</td></tr>
     <tr><td>Hosting</td><td>Cloud Run, single always-on instance</td></tr>
   </table>
 
   <h2>What I'd take away from this</h2>
-  <p>The flashy part is a model that turns a sentence into video. But the parts that make it a <em>product</em> are the unglamorous ones: an auth layer that works in two worlds from one build, a keystore that lets strangers pay their own way safely, a sync trick that makes voice and picture line up by construction, and a consistency strategy that stacks three weak guarantees into one strong-enough result. Generative video, in practice, is less about the single magic call and more about the system you wrap around it.</p>
+  <p>The flashy part is a model that turns a sentence into video. But the parts that make it a <em>product</em> are the unglamorous ones: a no-login, bring-your-own-key model that lets strangers pay their own way with nothing to secure at rest, a sync trick that makes voice and picture line up by construction, and a consistency strategy that stacks three weak guarantees into one strong-enough result. Generative video, in practice, is less about the single magic call and more about the system you wrap around it.</p>
 
   <hr />
-  <p class="byline" style="border:none;padding:0">Built with Gemini, Gemini Omni 1.1, Gemini TTS, FFmpeg, Node/Express, Firebase, and Google Cloud Run.</p>
+  <p class="byline" style="border:none;padding:0">Built with Gemini, Gemini Omni 1.1, Gemini TTS, FFmpeg, Node/Express, Firestore, and Google Cloud Run.</p>
 
 </div>
 </body>
