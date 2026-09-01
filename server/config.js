@@ -28,11 +28,17 @@ export const DEV_NO_AUTH = process.env.DEV_NO_AUTH === '1';
 // with pro-tts as a fallback.
 export const MODELS = {
   analysis: process.env.ANALYSIS_MODEL || 'gemini-3.7-flash',
+  // Fallback chain when the primary is overloaded (503) or unavailable: the app
+  // tries these in order. 3.6 is known-good; 3.1 is a last resort.
+  analysisFallbacks: (process.env.ANALYSIS_FALLBACKS || 'gemini-3.6-flash,gemini-3.1-flash')
+    .split(',').map((s) => s.trim()).filter(Boolean),
   tts: 'gemini-3.1-flash-tts-preview',
   ttsFallback: 'gemini-2.5-pro-preview-tts',
   // Generative "Generate a video" mode:
   omni: process.env.OMNI_MODEL || 'gemini-omni-1.1-flash', // per-shot text/image/reference -> video
   image: process.env.IMAGE_MODEL || 'gemini-3.7-flash-image', // synthetic character keyframe (subject ref)
+  imageFallbacks: (process.env.IMAGE_FALLBACKS || 'gemini-2.5-flash-image')
+    .split(',').map((s) => s.trim()).filter(Boolean),
 };
 
 // "Generate a video" (Omni) mode. A minute is built from several short shots

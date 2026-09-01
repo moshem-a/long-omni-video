@@ -46,14 +46,42 @@ export async function withRetry(fn, { tries = 5, baseMs = 900, label = 'gemini' 
   throw last;
 }
 
+// A model that is missing/unsupported (404) — fall back to the next model rather
+// than retrying the same one.
+const NOT_FOUND = /\b404\b|not found|NOT_FOUND|is not supported|no longer available/i;
+
+// Call generateContent across a list of models: retry transient errors per model,
+// and if a model stays overloaded (503) or is unavailable (404), fall back to the
+// next model in the chain. Non-transient errors (e.g. 400 bad key) throw at once.
+async function generateWithFallback(ai, models, params, label) {
+  const chain = [...new Set(models.filter(Boolean))];
+  let last;
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i];
+    try {
+      if (i > 0) log.warn({ label, model }, 'falling back to next model');
+      return await withRetry(() => ai.models.generateContent({ ...params, model }), { label: `${label}:${model}` });
+    } catch (err) {
+      last = err;
+      const msg = String(err?.message || err);
+      const hasNext = i < chain.length - 1;
+      if (!hasNext || !(TRANSIENT.test(msg) || NOT_FOUND.test(msg))) throw err;
+      log.warn({ label, model, err: msg.slice(0, 160) }, 'model unavailable; trying fallback');
+    }
+  }
+  throw last;
+}
+
+const ANALYSIS_CHAIN = [MODELS.analysis, ...(MODELS.analysisFallbacks || [])];
+const IMAGE_CHAIN = [MODELS.image, ...(MODELS.imageFallbacks || [])];
+
 // Cheap call to confirm a key works before we store it.
 export async function validateKey(apiKey) {
   try {
-    await withRetry(() => client(apiKey).models.generateContent({
-      model: MODELS.analysis,
+    await generateWithFallback(client(apiKey), ANALYSIS_CHAIN, {
       contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
       config: { maxOutputTokens: 1 },
-    }), { label: 'validateKey', tries: 3 });
+    }, 'validateKey');
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err?.message || err).slice(0, 200) };
@@ -132,14 +160,13 @@ export async function analyzeVideo(apiKey, filePath, { sizeBytes = 0, durationSe
   }
 
   log.info({ useFileApi }, 'requesting video analysis');
-  const res = await withRetry(() => ai.models.generateContent({
-    model: MODELS.analysis,
+  const res = await generateWithFallback(ai, ANALYSIS_CHAIN, {
     contents: [{ role: 'user', parts: [videoPart, { text: ANALYSIS_PROMPT }] }],
     config: {
       responseMimeType: 'application/json',
       responseSchema: ANALYSIS_SCHEMA,
     },
-  }), { label: 'analyze' });
+  }, 'analyze');
 
   const text = res.text;
   let parsed;
@@ -235,11 +262,10 @@ Break this into a sequence of ${SHOT_MIN_SEC}-${SHOT_MAX_SEC} second shots whose
 
 Return strictly JSON matching the schema.`;
 
-  const res = await withRetry(() => ai.models.generateContent({
-    model: MODELS.analysis,
+  const res = await generateWithFallback(ai, ANALYSIS_CHAIN, {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: { responseMimeType: 'application/json', responseSchema: STORYBOARD_SCHEMA },
-  }), { label: 'storyboard' });
+  }, 'storyboard');
   let parsed;
   try {
     parsed = JSON.parse(res.text);
@@ -259,15 +285,14 @@ Return strictly JSON matching the schema.`;
 // the canonical subject-reference image reused on every shot. Returns a Buffer.
 export async function generateCharacterImage(apiKey, description) {
   const ai = client(apiKey);
-  const res = await withRetry(() => ai.models.generateContent({
-    model: MODELS.image,
+  const res = await generateWithFallback(ai, IMAGE_CHAIN, {
     contents: [{
       role: 'user',
       parts: [{
         text: `A single, well-lit reference portrait photo of this character, neutral background, looking at camera, photorealistic: ${description}`,
       }],
     }],
-  }), { label: 'characterImage' });
+  }, 'characterImage');
   const part = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
   if (!part) throw new Error('Character image model returned no image');
   return Buffer.from(part.inlineData.data, 'base64');
