@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Building a Bring-Your-Own-Key AI Video Studio: from casual clips to a 60-second character-consistent film with Gemini Omni 1.1</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#242424; --muted:#6b6b6b; --line:#e6e6e6;
+    --accent:#5b6cff; --accent2:#8a6dff; --code-bg:#f6f7f9; --good:#0f9d58;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:Charter,Georgia,Cambria,"Times New Roman",serif;
+    font-size:20px; line-height:1.7;
+  }
+  .wrap{max-width:740px; margin:0 auto; padding:56px 24px 120px}
+  h1{font-size:40px; line-height:1.18; letter-spacing:-.02em; margin:0 0 18px; font-weight:800}
+  h2{font-size:28px; line-height:1.25; letter-spacing:-.01em; margin:56px 0 14px; font-weight:800}
+  h3{font-size:22px; margin:34px 0 8px; font-weight:700}
+  p{margin:0 0 22px}
+  .kicker{font-family:-apple-system,Segoe UI,Roboto,sans-serif; text-transform:uppercase;
+    letter-spacing:.14em; font-size:13px; color:var(--accent); font-weight:700; margin:0 0 14px}
+  .byline{font-family:-apple-system,Segoe UI,Roboto,sans-serif; color:var(--muted);
+    font-size:15px; margin:0 0 40px; padding-bottom:24px; border-bottom:1px solid var(--line)}
+  .lede{font-size:23px; color:#3a3a3a}
+  a{color:var(--accent); text-decoration:underline}
+  code{font-family:"SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+    font-size:15px; background:var(--code-bg); padding:2px 6px; border-radius:5px}
+  pre{background:var(--code-bg); border:1px solid var(--line); border-radius:12px;
+    padding:18px 20px; overflow:auto; margin:0 0 24px}
+  pre code{background:none; padding:0; font-size:14px; line-height:1.6; display:block}
+  blockquote{margin:0 0 24px; padding:6px 22px; border-left:3px solid var(--accent);
+    color:#444; font-style:italic}
+  ul,ol{margin:0 0 24px; padding-left:26px}
+  li{margin:0 0 10px}
+  figure{margin:36px 0}
+  figcaption{font-family:-apple-system,Segoe UI,Roboto,sans-serif; color:var(--muted);
+    font-size:14px; text-align:center; margin-top:12px}
+  .diagram{width:100%; height:auto; border:1px solid var(--line); border-radius:14px; background:#fbfbfd}
+  .callout{font-family:-apple-system,Segoe UI,Roboto,sans-serif; font-size:16px; line-height:1.6;
+    background:linear-gradient(180deg,#f6f7ff,#f3f0ff); border:1px solid #e4e2ff;
+    border-radius:14px; padding:20px 22px; margin:0 0 28px}
+  .callout b{color:#3a3fbf}
+  hr{border:none; border-top:1px solid var(--line); margin:52px 0}
+  .tag{display:inline-block; font-family:-apple-system,Segoe UI,Roboto,sans-serif;
+    font-size:13px; color:var(--muted); border:1px solid var(--line); border-radius:999px;
+    padding:4px 12px; margin:0 8px 8px 0}
+  table{width:100%; border-collapse:collapse; font-family:-apple-system,Segoe UI,Roboto,sans-serif;
+    font-size:15px; margin:0 0 26px}
+  th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{color:var(--muted); font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="kicker">Generative Video · System Design</p>
+  <h1>Building a bring-your-own-key AI video studio: from casual clips to a 60-second character-consistent film</h1>
+  <p class="byline">A deep dive into the architecture behind an app that both <em>edits</em> raw footage into a polished video and <em>generates</em> a minute-long video where one person stays visually and vocally identical across every shot — powered by Gemini, Gemini TTS, FFmpeg, and <strong>Gemini Omni 1.1</strong>.</p>
+
+  <p class="lede">There are two hard problems in "AI video." The first is making a rough, rambling recording feel professional. The second — much harder — is <em>generating</em> a coherent minute of video in which the same character keeps the same face and the same voice from the first frame to the last. This app does both, and it does it with a key idea that turns out to be more product decision than model trick: <strong>every user brings their own API key.</strong></p>
+
+  <p>
+    <span class="tag">Gemini Omni 1.1</span>
+    <span class="tag">Gemini TTS</span>
+    <span class="tag">Node / Express</span>
+    <span class="tag">FFmpeg</span>
+    <span class="tag">Firebase Auth</span>
+    <span class="tag">Cloud Run</span>
+    <span class="tag">Firestore</span>
+  </p>
+
+  <hr />
+
+  <h2>Two modes, one pipeline</h2>
+  <p>The app has a single wizard UI with a mode switch at the top:</p>
+  <ul>
+    <li><b>Edit an upload.</b> You drop in a 1–15 minute talking-head or screen recording. Gemini watches it at 1 fps, transcribes the speech, flags filler / silence / off-topic segments, and rewrites the script while preserving your meaning. You pick a professional TTS voice, and FFmpeg reassembles a clean MP4 — captions and music optional.</li>
+    <li><b>Generate a video.</b> You describe a concept ("a friendly barista shares three tips for better coffee"), choose a cast (invent a synthetic character <em>or</em> upload 1–3 reference photos), and the app plans a storyboard, generates each shot with Gemini Omni 1.1, narrates them with one locked voice, and stitches a ≤60-second film.</li>
+  </ul>
+  <p>Both modes share the same authentication, per-user encrypted keystore, job queue, durable history, Cloud Storage, TTS, and FFmpeg assembly stage. Only the "front half" of the pipeline differs.</p>
+
+  <figure>
+    <svg class="diagram" viewBox="0 0 900 560" role="img" aria-label="System architecture diagram">
+      <defs>
+        <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#5b6cff"/><stop offset="1" stop-color="#8a6dff"/>
+        </linearGradient>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#9aa1b2"/>
+        </marker>
+        <style>
+          .box{fill:#ffffff;stroke:#d7dbe6;stroke-width:1.5;rx:12}
+          .lbl{font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;fill:#242424;font-weight:600}
+          .sub{font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:11.5px;fill:#6b6b6b}
+          .grp{font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:12px;fill:#8a8f9c;font-weight:700;letter-spacing:.08em}
+          .flow{stroke:#9aa1b2;stroke-width:1.6;fill:none}
+        </style>
+      </defs>
+
+      <!-- Browser -->
+      <rect class="box" x="330" y="20" width="240" height="60" rx="12"/>
+      <text class="lbl" x="450" y="45" text-anchor="middle">Browser — wizard UI</text>
+      <text class="sub" x="450" y="64" text-anchor="middle">Firebase sign-in · bring-your-own-key</text>
+
+      <line class="flow" x1="450" y1="80" x2="450" y2="112" marker-end="url(#arrow)"/>
+
+      <!-- Server -->
+      <rect x="60" y="120" width="780" height="230" rx="16" fill="#fafbff" stroke="#e4e2ff" stroke-width="1.5"/>
+      <text class="grp" x="80" y="142">NODE / EXPRESS ON CLOUD RUN</text>
+
+      <!-- Auth -->
+      <rect class="box" x="80" y="156" width="230" height="52" rx="12"/>
+      <text class="lbl" x="195" y="180" text-anchor="middle">Auth middleware</text>
+      <text class="sub" x="195" y="197" text-anchor="middle">Firebase ID token · or IAP JWT</text>
+
+      <!-- Keystore -->
+      <rect class="box" x="335" y="156" width="230" height="52" rx="12"/>
+      <text class="lbl" x="450" y="180" text-anchor="middle">Encrypted keystore</text>
+      <text class="sub" x="450" y="197" text-anchor="middle">AES-256-GCM key per user</text>
+
+      <!-- Job queue -->
+      <rect class="box" x="590" y="156" width="230" height="52" rx="12"/>
+      <text class="lbl" x="705" y="180" text-anchor="middle">Job queue + history</text>
+      <text class="sub" x="705" y="197" text-anchor="middle">single-slot · Firestore mirror</text>
+
+      <!-- Edit pipeline -->
+      <rect class="box" x="80" y="230" width="350" height="100" rx="12"/>
+      <text class="grp" x="100" y="252" fill="#5b6cff">EDIT MODE</text>
+      <text class="sub" x="100" y="274">Gemini: analyze @1fps → segments + script</text>
+      <text class="sub" x="100" y="294">Gemini TTS: per-segment voiceover</text>
+      <text class="sub" x="100" y="314">FFmpeg: time-stretch → concat → mux</text>
+
+      <!-- Generate pipeline -->
+      <rect class="box" x="450" y="230" width="370" height="100" rx="12"/>
+      <text class="grp" x="470" y="252" fill="#8a6dff">GENERATE MODE</text>
+      <text class="sub" x="470" y="274">Gemini: storyboard (shots + narration)</text>
+      <text class="sub" x="470" y="294">Omni 1.1: per-shot video (refs + prompt)</text>
+      <text class="sub" x="470" y="314">Gemini TTS + FFmpeg: narrate → stitch</text>
+
+      <!-- external services -->
+      <line class="flow" x1="255" y1="350" x2="255" y2="392" marker-end="url(#arrow)"/>
+      <line class="flow" x1="635" y1="350" x2="635" y2="392" marker-end="url(#arrow)"/>
+
+      <rect class="box" x="60" y="400" width="360" height="56" rx="12"/>
+      <text class="lbl" x="240" y="424" text-anchor="middle">Gemini API (user's key)</text>
+      <text class="sub" x="240" y="442" text-anchor="middle">analysis · TTS · image · Omni 1.1 interactions</text>
+
+      <rect class="box" x="470" y="400" width="370" height="56" rx="12"/>
+      <text class="lbl" x="655" y="424" text-anchor="middle">Cloud Storage + Firestore</text>
+      <text class="sub" x="655" y="442" text-anchor="middle">uploads · shots · final.mp4 · job state</text>
+
+      <!-- output -->
+      <line class="flow" x1="450" y1="456" x2="450" y2="496" marker-end="url(#arrow)"/>
+      <rect x="300" y="504" width="300" height="46" rx="12" fill="url(#g1)"/>
+      <text class="lbl" x="450" y="532" text-anchor="middle" fill="#ffffff">Downloadable MP4</text>
+    </svg>
+    <figcaption>One build, two front-half pipelines, shared spine: auth → keystore → queue → TTS → FFmpeg.</figcaption>
+  </figure>
+
+  <h2>The product decision that shapes the architecture: bring your own key</h2>
+  <p>Most AI demos put the developer's API key on the server and eat the cost. That does not survive contact with "open it to everyone in the world." So the app flips it: <strong>each user signs in and pastes their own Gemini API key.</strong> They get one free at <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>.</p>
+  <p>This has three consequences that ripple through the whole design:</p>
+  <ul>
+    <li><b>No shared quota or bill.</b> Usage is billed to whoever runs the job. The app can be genuinely public.</li>
+    <li><b>Keys must be stored safely.</b> Each key is encrypted with AES-256-GCM before it touches disk and stored in Firestore as <code>base64(iv).base64(tag).base64(ciphertext)</code>. The decryption secret lives in Secret Manager, never in the repo. The plaintext key exists only in memory, only while a job runs, and is re-attached from the keystore at each pipeline entry point — never persisted onto the job record.</li>
+    <li><b>Identity is required.</b> You can't have per-user keys without per-user accounts.</li>
+  </ul>
+
+  <div class="callout">
+    <b>Security note.</b> A user's plaintext key is never written to disk or logged, never returned to the browser after it is saved, and never stored on the job object. It is decrypted on demand, held in memory for the duration of a single job, and dropped.
+  </div>
+
+  <h2>One build, two ways to sign in</h2>
+  <p>The same container runs in two very different environments, so authentication is dual-mode. A single public endpoint, <code>GET /api/config</code>, tells the frontend which mode is live:</p>
+  <ul>
+    <li><b>Firebase Authentication</b> for the public deployment. The browser shows "Continue with Google," anyone can sign up, and the client sends the Firebase ID token as <code>Authorization: Bearer &lt;token&gt;</code>. The server verifies it with the Firebase Admin SDK.</li>
+    <li><b>Identity-Aware Proxy (IAP)</b> for a private, org-SSO deployment. Google signs a JWT into <code>x-goog-iap-jwt-assertion</code>; the server verifies it against Google's IAP public keys. No login UI needed.</li>
+  </ul>
+  <p>Whichever header is present wins, and the rest of the app only ever sees a stable <code>req.uid</code>. The per-user keystore and history key off that id identically in both worlds.</p>
+
+<pre><code>export async function requireAuth(req, res, next) {
+  const authz = req.headers.authorization || '';
+  if (authz.startsWith('Bearer ')) {
+    const decoded = await firebaseAuth().verifyIdToken(authz.slice(7).trim());
+    req.uid = decoded.uid; req.email = decoded.email || null;
+    return next();
+  }
+  const assertion = req.headers['x-goog-iap-jwt-assertion'];
+  if (assertion) { /* verify IAP JWT → req.uid = payload.sub */ }
+  return res.status(401).json({ error: 'Sign-in required' });
+}</code></pre>
+
+  <h2>Edit mode: the sync trick</h2>
+  <p>Replacing a rambling voice track with clean TTS creates an obvious problem — the new narration is a different length than the original speech, so lips, cuts, and captions drift out of sync. The fix is structural rather than clever:</p>
+  <blockquote>Each kept segment's video is time-stretched (FFmpeg <code>setpts</code>) to match the exact length of its freshly generated TTS audio. Voice, visuals, and captions then line up <em>by construction</em>, segment by segment, before anything is concatenated.</blockquote>
+  <p>The pipeline is a series of serialized stages — <code>probe → analyze → plan → tts → captions → assemble</code> — with each kept segment cut, its script re-voiced, its video fit to that audio, and the whole thing concatenated and muxed with optional captions and background music.</p>
+
+  <h2>Generate mode: making a minute out of many short shots</h2>
+  <p>Gemini Omni 1.1 (<code>gemini-omni-1.1-flash</code>) generates short video clips via a <code>POST /v1beta/interactions</code> call. A full minute isn't a single call — it's a sequence of short shots that <em>we</em> stitch. That means the interesting engineering is entirely about <strong>consistency across independent generations.</strong></p>
+
+  <h3>1. Plan the film first</h3>
+  <p>Before generating a single frame, Gemini writes a storyboard: an ordered list of shots that sum to your target duration, each with a self-contained visual prompt, a narration line, and a duration. Crucially, every shot's prompt <em>embeds the locked character description</em>, so identity survives even in a shot generated in isolation. The storyboard is editable — you can rewrite any shot's visuals or narration, and regenerating a single shot re-runs just that one.</p>
+
+  <h3>2. Carry identity three ways at once</h3>
+  <p>The Omni docs give no explicit "lock this character" guarantee, and referencing across multiple generated videos isn't supported. So the app doesn't rely on any single mechanism — it stacks three:</p>
+  <ol>
+    <li><b>The same subject-reference images on every shot.</b> Whether you uploaded photos or the app generated a synthetic keyframe (via the image model), those exact reference images are re-sent with every shot.</li>
+    <li><b>The character description embedded in every prompt.</b> Text describing the person rides along in each shot's visual prompt.</li>
+    <li><b>Task-appropriate generation.</b> Each shot uses the right Omni task — <code>reference_to_video</code> when subject refs drive it, <code>image_to_video</code> when a keyframe drives motion, <code>text_to_video</code> otherwise.</li>
+  </ol>
+
+  <div class="callout">
+    <b>A real constraint I hit in production.</b> Omni rejects <code>previous_interaction_id</code> whenever a video <code>task</code> is set — the two are mutually exclusive (a live <code>400: previous_interaction_id is not allowed when video task is set</code>). Since every shot sets a task, the app can't lean on stateful chaining for continuity. Identity therefore rests entirely on the three mechanisms above: same reference images, same description, right task — a good reminder that consistency in generative video is a <em>systems</em> property, not one API parameter.
+  </div>
+
+  <h3>3. Lock the voice by owning the audio</h3>
+  <p>Omni regenerates audio per interaction, and voice editing isn't supported — so across shots the voice would drift. The app sidesteps this entirely: it <strong>discards Omni's audio</strong> and lays down its own narration with a single Gemini TTS voice you pick once. In the assembly stage, each shot's video input is muxed with <em>only</em> the TTS track (the shot's own audio is dropped), and the video is time-stretched to the narration length — the same sync trick from edit mode, reused. One voice, start to finish, by construction.</p>
+
+  <h3>4. Stitch and finish</h3>
+  <p>Each generated shot is downloaded (720p+ clips come back as a Files API URI you poll until <code>ACTIVE</code>, then download), stored in Cloud Storage, narrated, time-stretched, concatenated, and muxed with optional captions and music — producing one downloadable MP4, saved to your durable history in either 16:9 or 9:16.</p>
+
+  <h2>Durability without a database write per frame</h2>
+  <p>Cloud Run instances are ephemeral and the job store is in-memory for speed, so job state is mirrored to Firestore — but carefully. Only meaningful state transitions are mirrored (job created, storyboard saved, a shot's <em>status</em> changing, job done), not per-shot progress ticks. That keeps a full generate job to roughly 8–12 Firestore writes while still surviving a redeploy mid-render. Any field that must persist has to be added to <em>both</em> the Firestore allow-list and the "should mirror" predicate — a trap worth stating out loud, because a field in one but not the other silently fails to survive a restart.</p>
+
+  <h2>Responsible-use guardrails</h2>
+  <p>Generating video of real, recognizable people is powerful and easy to misuse. The photo-upload path requires an explicit consent checkbox ("I have the right to use these images and everyone shown has consented"), warns against creating videos of real people without consent, and notes that uploading recognizable-people photos is restricted in the EEA, Switzerland, and the UK — steering those users to the invent-a-character path instead.</p>
+
+  <h2>The stack, at a glance</h2>
+  <table>
+    <tr><th>Concern</th><th>Choice</th></tr>
+    <tr><td>Analysis &amp; planning</td><td>Gemini (video understanding, JSON storyboard)</td></tr>
+    <tr><td>Video generation</td><td>Gemini Omni 1.1 (<code>gemini-omni-1.1-flash</code>)</td></tr>
+    <tr><td>Voice</td><td>Gemini TTS (one locked narrator)</td></tr>
+    <tr><td>Assembly</td><td>FFmpeg (time-stretch, concat, captions, music)</td></tr>
+    <tr><td>Auth</td><td>Firebase Auth (public) or IAP (org SSO)</td></tr>
+    <tr><td>Storage</td><td>Cloud Storage (media) + Firestore (state, encrypted keys)</td></tr>
+    <tr><td>Hosting</td><td>Cloud Run, single always-on instance</td></tr>
+  </table>
+
+  <h2>What I'd take away from this</h2>
+  <p>The flashy part is a model that turns a sentence into video. But the parts that make it a <em>product</em> are the unglamorous ones: an auth layer that works in two worlds from one build, a keystore that lets strangers pay their own way safely, a sync trick that makes voice and picture line up by construction, and a consistency strategy that stacks three weak guarantees into one strong-enough result. Generative video, in practice, is less about the single magic call and more about the system you wrap around it.</p>
+
+  <hr />
+  <p class="byline" style="border:none;padding:0">Built with Gemini, Gemini Omni 1.1, Gemini TTS, FFmpeg, Node/Express, Firebase, and Google Cloud Run.</p>
+
+</div>
+</body>
+</html>

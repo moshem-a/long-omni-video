@@ -1,0 +1,13 @@
+node_modules
+jobs
+out
+.env
+.git
+.gitignore
+*.log
+.idx
+.vscode
+assets/music/*.mp3
+assets/music/*.m4a
+assets/music/*.wav
+npm-debug.log

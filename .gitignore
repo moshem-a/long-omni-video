@@ -1,0 +1,8 @@
+node_modules/
+.env
+# Anchored to repo root so they don't also match server/jobs/ (real source).
+/uploads/
+/jobs/
+/out/
+*.log
+.DS_Store

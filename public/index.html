@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Video Editor — Casual to Professional</title>
+  <link href="/style.css" rel="stylesheet" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🎬 AI Video Editor</div>
+    <div class="mode-switch hidden" id="modeSwitch">
+      <button class="mode-btn active" data-mode="edit">Edit an upload</button>
+      <button class="mode-btn" data-mode="generate">Generate a video</button>
+    </div>
+    <div class="account hidden" id="account">
+      <span id="accountEmail" class="muted"></span>
+      <button id="historyBtn" class="ghost small">History</button>
+      <button id="changeKeyBtn" class="ghost small">Change key</button>
+      <a id="logoutBtn" class="ghost small" href="/_gcp_iap/clear_login_cookie">Log out</a>
+    </div>
+  </header>
+
+  <!-- Gate: sign in (public / Firebase Auth deployments) -->
+  <section class="gate hidden" id="gateSignin">
+    <div class="gate-card">
+      <h2>Sign in to get started</h2>
+      <p class="muted">
+        Create videos with your own Gemini API key. Sign in with Google — it's free,
+        open to everyone, and your key stays private (encrypted, tied to your account).
+      </p>
+      <button id="googleSignInBtn" class="primary big">Continue with Google</button>
+      <div class="muted" id="signinStatus"></div>
+    </div>
+  </section>
+
+  <!-- History overlay -->
+  <div class="overlay hidden" id="historyOverlay">
+    <div class="history-card">
+      <div class="history-head">
+        <h2>Your runs</h2>
+        <button id="historyClose" class="ghost small">✕ Close</button>
+      </div>
+      <div id="historyList" class="history-list"></div>
+    </div>
+  </div>
+
+  <!-- Gate: Gemini key -->
+  <section class="gate hidden" id="gateKey">
+    <div class="gate-card">
+      <h2>Add your Gemini API key</h2>
+      <p class="muted">
+        The app uses your own key for analysis and voice generation. Get one free at
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.
+        It's stored encrypted and never shown again.
+      </p>
+      <input type="password" id="keyInput" placeholder="Paste your Gemini API key" autocomplete="off" />
+      <button id="saveKeyBtn" class="primary">Save key</button>
+      <div class="muted" id="keyStatus"></div>
+    </div>
+  </section>
+
+  <ol class="steps hidden" id="steps">
+    <li data-step="upload">Upload</li>
+    <li data-step="analyze">Analyze</li>
+    <li data-step="review">Review &amp; cut</li>
+    <li data-step="voice">Voice</li>
+    <li data-step="options">Options</li>
+    <li data-step="render">Render</li>
+    <li data-step="done">Download</li>
+  </ol>
+
+  <ol class="steps hidden" id="stepsGen">
+    <li data-step="brief">Brief</li>
+    <li data-step="storyboard">Storyboard</li>
+    <li data-step="voice">Voice</li>
+    <li data-step="options">Options</li>
+    <li data-step="generate">Generate</li>
+    <li data-step="done">Download</li>
+  </ol>
+
+  <main id="app" class="hidden">
+    <!-- Step: Brief (generate mode) -->
+    <section class="panel hidden" data-panel="brief">
+      <h2>Describe your video</h2>
+      <p class="muted">
+        Generate a video up to 60 seconds where the same person appears —
+        same face, same voice — across every shot.
+      </p>
+      <label class="field"><b>Concept</b>
+        <textarea id="genConcept" rows="3"
+          placeholder="e.g. A friendly barista shares three tips for brewing better coffee at home."></textarea>
+      </label>
+      <div class="brief-grid">
+        <label class="field"><b>Length: <span id="genDurLabel">30s</span></b>
+          <input type="range" id="genDuration" min="8" max="60" step="1" value="30" />
+        </label>
+        <div class="field"><b>Aspect ratio</b>
+          <div class="toggle-row" id="genAspect">
+            <button type="button" class="toggle active" data-aspect="16:9">16:9 landscape</button>
+            <button type="button" class="toggle" data-aspect="9:16">9:16 shorts</button>
+          </div>
+        </div>
+      </div>
+      <div class="field"><b>Who's in the video?</b>
+        <div class="toggle-row" id="genCharMode">
+          <button type="button" class="toggle active" data-charmode="synthetic">Invent a character</button>
+          <button type="button" class="toggle" data-charmode="upload">Upload photos</button>
+        </div>
+      </div>
+      <label class="field" id="genDescField"><b>Character description</b>
+        <textarea id="genCharDesc" rows="2"
+          placeholder="e.g. A woman in her 30s with short curly dark hair, wearing a mustard sweater."></textarea>
+      </label>
+      <div class="field hidden" id="genPhotosField"><b>Reference photos (1–3)</b>
+        <input type="file" id="genPhotos" accept="image/*" multiple />
+        <div class="thumbs" id="genThumbs"></div>
+        <label class="consent"><input type="checkbox" id="genConsent" />
+          I have the right to use these images and everyone shown has consented to appear
+          in a generated video.</label>
+        <p class="warn-note">⚠ Don't create videos of real people without their consent.
+          Uploading photos of real, recognizable people is also not available in the EEA,
+          Switzerland, or the UK — use an invented character there.</p>
+      </div>
+      <div class="actions">
+        <button id="toStoryboard" class="primary">Create storyboard →</button>
+      </div>
+    </section>
+
+    <!-- Step: Storyboard (generate mode) -->
+    <section class="panel hidden" data-panel="storyboard">
+      <h2>Your storyboard</h2>
+      <p class="muted">
+        Edit any shot's visuals or narration. Changing a shot's visuals regenerates just that shot.
+        <span id="sbSummary"></span>
+      </p>
+      <div id="sbLoading" class="hidden">
+        <div class="spinner"></div>
+        <p class="muted center">Planning your shots…</p>
+      </div>
+      <div id="shots" class="segments"></div>
+      <div class="actions">
+        <button id="backToBrief" class="ghost">← Back</button>
+        <button id="toStoryboardVoice" class="primary">Next: choose a voice →</button>
+      </div>
+    </section>
+
+    <!-- Step: Upload -->
+    <section class="panel" data-panel="upload">
+      <h2>Upload your video</h2>
+      <p class="muted">A 1–15 minute talking or screen-recording video works best.</p>
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept="video/*" hidden />
+        <span id="dropText">Drag &amp; drop a video here, or click to choose</span>
+      </label>
+      <div class="progress hidden" id="uploadProgress"><div class="bar"></div></div>
+    </section>
+
+    <!-- Step: Analyze -->
+    <section class="panel hidden" data-panel="analyze">
+      <h2>Analyzing your video…</h2>
+      <p class="muted" id="analyzeStatus">Gemini is watching the video and transcribing the speech.</p>
+      <div class="spinner"></div>
+    </section>
+
+    <!-- Step: Review -->
+    <section class="panel hidden" data-panel="review">
+      <h2>Review &amp; cut</h2>
+      <p class="muted">
+        Untick segments to cut them. Edit the cleaned script that the new voice will read.
+        <span id="durSummary"></span>
+      </p>
+      <div id="segments" class="segments"></div>
+      <div class="actions">
+        <button id="toReviewVoice" class="primary">Next: choose a voice →</button>
+      </div>
+    </section>
+
+    <!-- Step: Voice -->
+    <section class="panel hidden" data-panel="voice">
+      <h2>Choose a professional voice</h2>
+      <p class="muted">Click ▶ to preview. The selected voice narrates the whole video.</p>
+      <div id="voices" class="voices"></div>
+      <div class="actions">
+        <button id="backToReview" class="ghost">← Back</button>
+        <button id="toOptions" class="primary">Next: options →</button>
+      </div>
+    </section>
+
+    <!-- Step: Options -->
+    <section class="panel hidden" data-panel="options">
+      <h2>Finishing options</h2>
+      <div class="options-grid">
+        <label class="opt"><input type="checkbox" id="optCaptions" /> Burn in captions</label>
+        <label class="opt">Background music
+          <select id="optMusic">
+            <option value="none">None</option>
+            <option value="lofi_1">Lo-fi (calm)</option>
+            <option value="upbeat_1">Upbeat</option>
+            <option value="corporate_1">Corporate</option>
+          </select>
+        </label>
+        <label class="opt">Music volume
+          <input type="range" id="optMusicGain" min="-40" max="-6" value="-22" />
+        </label>
+        <label class="opt">Video fit
+          <select id="optFit">
+            <option value="stretch">Smooth (match pace to voice)</option>
+            <option value="pad">Keep pace (freeze/pad)</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="backToVoice" class="ghost">← Back</button>
+        <button id="startRender" class="primary" data-mode-only="edit">Create professional video ✨</button>
+        <button id="startGenerate" class="primary hidden" data-mode-only="generate">Generate video ✨</button>
+      </div>
+    </section>
+
+    <!-- Step: Generate progress (generate mode) -->
+    <section class="panel hidden" data-panel="generate">
+      <h2>Generating your video…</h2>
+      <p class="muted" id="generateStatus">
+        Creating each shot with a consistent character, then adding your narration.
+      </p>
+      <div class="progress"><div class="bar" id="generateBar"></div></div>
+      <p class="muted center small-note">This can take several minutes — each shot is generated in sequence.</p>
+    </section>
+
+    <!-- Step: Render -->
+    <section class="panel hidden" data-panel="render">
+      <h2>Creating your video…</h2>
+      <p class="muted" id="renderStatus">Generating voiceover and assembling the timeline.</p>
+      <div class="progress"><div class="bar" id="renderBar"></div></div>
+    </section>
+
+    <!-- Step: Done -->
+    <section class="panel hidden" data-panel="done">
+      <h2>Your professional video is ready 🎉</h2>
+      <video id="result" controls playsinline></video>
+      <div class="actions">
+        <a id="downloadLink" class="primary" download>⬇ Download MP4</a>
+        <button id="startOver" class="ghost">Start over</button>
+      </div>
+    </section>
+
+    <div class="error hidden" id="errorBox"></div>
+  </main>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

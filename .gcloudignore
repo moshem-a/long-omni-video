@@ -1,0 +1,15 @@
+# Source upload ignore for `gcloud run deploy --source .`
+# IMPORTANT: keep these runtime-dir patterns ANCHORED with a leading slash so
+# they only match the repo-root dirs, NOT server/jobs (the code lives there).
+.git/
+node_modules/
+.env
+*.log
+/jobs/
+/out/
+/uploads/
+.idx/
+.vscode/
+assets/music/*.mp3
+assets/music/*.m4a
+assets/music/*.wav

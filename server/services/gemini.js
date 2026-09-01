@@ -1,0 +1,253 @@
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { GoogleGenAI, Type } from '@google/genai';
+import {
+  MODELS,
+  FILE_API_SIZE_BYTES,
+  FILE_API_DURATION_SEC,
+  SHOT_MIN_SEC,
+  SHOT_MAX_SEC,
+} from '../config.js';
+import { uploadAndWait } from './files.js';
+import { log } from '../util/log.js';
+
+// One GoogleGenAI client per distinct API key, cached by a hash of the key so
+// repeated calls for the same user reuse the client.
+const _clients = new Map();
+function client(apiKey) {
+  if (!apiKey) throw new Error('No Gemini API key available for this request');
+  const id = crypto.createHash('sha256').update(apiKey).digest('hex');
+  let c = _clients.get(id);
+  if (!c) {
+    c = new GoogleGenAI({ apiKey });
+    _clients.set(id, c);
+  }
+  return c;
+}
+
+// Cheap call to confirm a key works before we store it.
+export async function validateKey(apiKey) {
+  try {
+    await client(apiKey).models.generateContent({
+      model: MODELS.analysis,
+      contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+      config: { maxOutputTokens: 1 },
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err).slice(0, 200) };
+  }
+}
+
+// Structured schema mirroring analysis.json segments.
+const ANALYSIS_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    language: { type: Type.STRING },
+    segments: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          start: { type: Type.STRING, description: 'MM:SS start timecode' },
+          end: { type: Type.STRING, description: 'MM:SS end timecode' },
+          transcript: { type: Type.STRING, description: 'verbatim words spoken, empty if none' },
+          cleanedScript: {
+            type: Type.STRING,
+            description: 'filler/grammar-cleaned narration preserving meaning; empty if no speech',
+          },
+          sceneDescription: { type: Type.STRING },
+          category: {
+            type: Type.STRING,
+            enum: ['speech', 'silence', 'filler', 'offtopic', 'bridge'],
+          },
+          relevance: { type: Type.NUMBER, description: '0..1' },
+          keep: { type: Type.BOOLEAN },
+          hasSpokenContent: { type: Type.BOOLEAN },
+        },
+        required: [
+          'start', 'end', 'transcript', 'cleanedScript', 'sceneDescription',
+          'category', 'relevance', 'keep', 'hasSpokenContent',
+        ],
+        propertyOrdering: [
+          'start', 'end', 'transcript', 'cleanedScript', 'sceneDescription',
+          'category', 'relevance', 'keep', 'hasSpokenContent',
+        ],
+      },
+    },
+  },
+  required: ['language', 'segments'],
+  propertyOrdering: ['language', 'segments'],
+};
+
+const ANALYSIS_PROMPT = `You are a professional video editor analyzing a screen-recording / talking-head video.
+The video is sampled at 1 frame per second. Reference ALL timestamps as MM:SS.
+
+Segment the video into contiguous, non-overlapping spans covering the whole duration in order.
+For each span return:
+- start, end: MM:SS timecodes.
+- transcript: the verbatim words spoken in that span (empty string if no speech).
+- cleanedScript: rewrite the spoken words for a professional voiceover — remove filler words ("um", "uh", "like", "you know"), false starts and stutters, and fix grammar — but PRESERVE the original meaning and add no new facts. If the span has no speech, use an empty string.
+- sceneDescription: what is visually on screen.
+- category: one of speech | silence | filler | offtopic | bridge.
+- relevance: 0..1, how relevant the span is to the core message.
+- keep: true to keep this span in the final video, false to cut it. Set keep=false for silence, filler-only spans, long dead air, and clearly off-topic/irrelevant content. Keep substantive speech.
+- hasSpokenContent: true if there is meaningful speech to narrate.
+
+Return strictly the JSON matching the schema.`;
+
+// Analyze a video file. Chooses File API vs inline based on size/duration.
+export async function analyzeVideo(apiKey, filePath, { sizeBytes = 0, durationSec = 0 } = {}) {
+  const ai = client(apiKey);
+  const useFileApi = sizeBytes > FILE_API_SIZE_BYTES || durationSec > FILE_API_DURATION_SEC;
+
+  let videoPart;
+  if (useFileApi) {
+    const file = await uploadAndWait(ai, filePath, 'video/mp4');
+    videoPart = { fileData: { fileUri: file.uri, mimeType: file.mimeType || 'video/mp4' } };
+  } else {
+    const data = fs.readFileSync(filePath).toString('base64');
+    videoPart = { inlineData: { mimeType: 'video/mp4', data } };
+  }
+
+  log.info({ useFileApi }, 'requesting video analysis');
+  const res = await ai.models.generateContent({
+    model: MODELS.analysis,
+    contents: [{ role: 'user', parts: [videoPart, { text: ANALYSIS_PROMPT }] }],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: ANALYSIS_SCHEMA,
+    },
+  });
+
+  const text = res.text;
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Failed to parse analysis JSON: ${e.message}\n${text?.slice(0, 500)}`);
+  }
+  return parsed;
+}
+
+async function ttsOnce(ai, model, text, voiceName) {
+  const res = await ai.models.generateContent({
+    model,
+    contents: [{ role: 'user', parts: [{ text }] }],
+    config: {
+      responseModalities: ['AUDIO'],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+    },
+  });
+  const part = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+  return part ? Buffer.from(part.inlineData.data, 'base64') : null;
+}
+
+// Synthesize one segment of narration. Returns raw PCM (Buffer). Tries the primary
+// TTS model, then the fallback, since preview TTS models occasionally return text
+// instead of audio.
+export async function synthesizeSpeech(apiKey, text, voiceName) {
+  const ai = client(apiKey);
+  const models = [MODELS.tts, MODELS.ttsFallback].filter(Boolean);
+  for (const model of models) {
+    try {
+      const buf = await ttsOnce(ai, model, text, voiceName);
+      if (buf) return buf;
+      log.warn({ model }, 'TTS returned no audio; trying next model');
+    } catch (err) {
+      log.warn({ model, err: String(err?.message || err).slice(0, 160) }, 'TTS call failed; trying next model');
+    }
+  }
+  throw new Error('TTS produced no audio from any model');
+}
+
+// ---------------------------------------------------------------------------
+// "Generate a video" (Omni) mode helpers
+// ---------------------------------------------------------------------------
+
+const STORYBOARD_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    title: { type: Type.STRING },
+    shots: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          prompt: {
+            type: Type.STRING,
+            description:
+              'Self-contained cinematic description of ONE continuous shot (camera, action, setting, lighting). Repeat the exact character description every time so the person looks identical.',
+          },
+          narration: {
+            type: Type.STRING,
+            description: 'One sentence of voiceover narration spoken over this shot.',
+          },
+          durationSec: { type: Type.NUMBER, description: `Shot length in seconds, ${SHOT_MIN_SEC}-${SHOT_MAX_SEC}.` },
+        },
+        required: ['prompt', 'narration', 'durationSec'],
+        propertyOrdering: ['prompt', 'narration', 'durationSec'],
+      },
+    },
+  },
+  required: ['title', 'shots'],
+  propertyOrdering: ['title', 'shots'],
+};
+
+// Break a concept into an ordered list of short shots that sum to ~targetDuration.
+// Each shot prompt embeds the locked character description so identity survives
+// even independent of Omni's stateful chaining.
+export async function generateStoryboard(apiKey, brief) {
+  const ai = client(apiKey);
+  const target = Math.min(60, Math.max(SHOT_MIN_SEC, Number(brief.targetDurationSec) || 30));
+  const character = (brief.characterDesc || '').trim();
+  const prompt = `You are a film director planning a short ${target}-second video.
+
+Concept: ${brief.concept}
+${character ? `Main character (describe them EXACTLY the same way in every shot's prompt so they look identical throughout): ${character}` : 'Keep any recurring people visually identical across all shots — describe them the same way every time.'}
+Aspect ratio: ${brief.aspectRatio || '16:9'}.
+
+Break this into a sequence of ${SHOT_MIN_SEC}-${SHOT_MAX_SEC} second shots whose durations sum to about ${target} seconds (never more than 60). For each shot:
+- prompt: a single continuous camera shot (no scene cuts within a shot), vividly described for a text-to-video model, ALWAYS restating the full character description so the person is consistent.
+- narration: exactly one spoken sentence of voiceover for that shot, in a consistent narrator voice.
+- durationSec: between ${SHOT_MIN_SEC} and ${SHOT_MAX_SEC}.
+
+Return strictly JSON matching the schema.`;
+
+  const res = await ai.models.generateContent({
+    model: MODELS.analysis,
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    config: { responseMimeType: 'application/json', responseSchema: STORYBOARD_SCHEMA },
+  });
+  let parsed;
+  try {
+    parsed = JSON.parse(res.text);
+  } catch (e) {
+    throw new Error(`Failed to parse storyboard JSON: ${e.message}\n${res.text?.slice(0, 400)}`);
+  }
+  // Clamp durations and total to keep us <= 60s.
+  let budget = 60;
+  parsed.shots = (parsed.shots || []).map((s) => {
+    const d = Math.min(SHOT_MAX_SEC, Math.max(SHOT_MIN_SEC, Math.round(Number(s.durationSec) || SHOT_MIN_SEC)));
+    return { ...s, durationSec: d };
+  }).filter((s) => (budget -= s.durationSec) >= -SHOT_MAX_SEC);
+  return parsed;
+}
+
+// Generate one portrait keyframe for a synthetic character; the PNG bytes become
+// the canonical subject-reference image reused on every shot. Returns a Buffer.
+export async function generateCharacterImage(apiKey, description) {
+  const ai = client(apiKey);
+  const res = await ai.models.generateContent({
+    model: MODELS.image,
+    contents: [{
+      role: 'user',
+      parts: [{
+        text: `A single, well-lit reference portrait photo of this character, neutral background, looking at camera, photorealistic: ${description}`,
+      }],
+    }],
+  });
+  const part = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+  if (!part) throw new Error('Character image model returned no image');
+  return Buffer.from(part.inlineData.data, 'base64');
+}
