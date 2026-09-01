@@ -168,6 +168,12 @@ button:hover { filter: brightness(1.08); }
   border: 1px solid var(--border); background: #11141b; color: var(--text); font: inherit;
 }
 .big { padding: 14px 22px; font-size: 16px; }
+.gate-card .big { display: block; width: 100%; margin: 8px 0; }
+.or-sep { color: var(--muted); font-size: 13px; margin: 10px 0; position: relative; }
+.or-sep::before, .or-sep::after {
+  content: ""; position: absolute; top: 50%; width: 38%; height: 1px; background: var(--border);
+}
+.or-sep::before { left: 0; } .or-sep::after { right: 0; }
 #keyStatus { margin-top: 12px; }
 
 /* History overlay */

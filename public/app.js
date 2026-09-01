@@ -203,6 +203,23 @@ $('#googleSignInBtn').addEventListener('click', async () => {
   }
 });
 
+// "Try without signing in": Firebase Anonymous Auth gives a uid (so the keystore
+// and job pipeline work unchanged) without any account or sign-up. The user still
+// provides their own Gemini key; guest sessions are ephemeral (no durable history).
+$('#guestBtn').addEventListener('click', async () => {
+  if (!firebaseAuthInstance) return;
+  $('#signinStatus').textContent = 'Starting a guest session…';
+  try {
+    await firebaseMod.signInAnonymously(firebaseAuthInstance);
+    $('#signinStatus').textContent = '';
+  } catch (err) {
+    $('#signinStatus').textContent =
+      /admin-restricted|operation-not-allowed/i.test(err.code || err.message || '')
+        ? 'Guest access is not enabled for this app.'
+        : (err.message || 'Could not start guest session');
+  }
+});
+
 $('#logoutBtn').addEventListener('click', async (e) => {
   if (firebaseAuthInstance) {
     e.preventDefault(); // Firebase deployments sign out client-side, not via IAP
@@ -262,9 +279,12 @@ async function boot() {
 async function afterAuth() {
   try {
     const me = await (await authedFetch('/api/me')).json();
-    if (me.email) {
+    // Show the account bar (History / Change key / Log out) for signed-in users
+    // and guests alike. Anonymous guests have no email -> label them "Guest".
+    const isGuest = firebaseAuthInstance?.currentUser?.isAnonymous;
+    if (me.email || isGuest) {
       $('#account').classList.remove('hidden');
-      $('#accountEmail').textContent = me.email;
+      $('#accountEmail').textContent = me.email || 'Guest';
     }
     if (me.hasKey) {
       $('#modeSwitch').classList.remove('hidden');
