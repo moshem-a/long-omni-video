@@ -165,7 +165,8 @@ function parseErr(text) {
 // device and send it with every request (x-gemini-key). The server never stores
 // it — it stays in memory only for the life of a job. A random per-browser id
 // (x-client-id) scopes this browser's job history. No login, no sign-up.
-const KEY_LS = 'gemini_api_key';
+const KEY_LS = 'gemini_api_key';       // legacy single-key slot (migrated below)
+const KEYS_LS = 'gemini_api_keys';     // ordered list of keys (primary + backups)
 const CID_LS = 'client_id';
 
 function clientId() {
@@ -176,30 +177,98 @@ function clientId() {
   }
   return cid;
 }
-const getStoredKey = () => localStorage.getItem(KEY_LS) || '';
 
-// Attach this browser's locally-stored key and id to every API call.
+// The user can store several keys: the first that works is used, and the rest act
+// as automatic backups (the server falls through to the next on quota/invalid).
+function getStoredKeys() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(KEYS_LS) || '[]');
+    if (Array.isArray(arr) && arr.length) return arr.filter(Boolean);
+  } catch { /* fall through to legacy migration */ }
+  // Migrate a pre-existing single key from the old slot.
+  const legacy = localStorage.getItem(KEY_LS);
+  if (legacy) {
+    localStorage.setItem(KEYS_LS, JSON.stringify([legacy]));
+    localStorage.removeItem(KEY_LS);
+    return [legacy];
+  }
+  return [];
+}
+function setStoredKeys(keys) {
+  const unique = [...new Set(keys.filter(Boolean))];
+  localStorage.setItem(KEYS_LS, JSON.stringify(unique));
+  localStorage.removeItem(KEY_LS);
+  return unique;
+}
+const hasStoredKey = () => getStoredKeys().length > 0;
+// Mask a key for display: keep enough to recognise it, hide the secret middle.
+const maskKey = (k) => (k.length <= 12 ? k : `${k.slice(0, 6)}…${k.slice(-4)}`);
+
+// Attach this browser's keys (comma-joined; the server rotates over them) and id.
 async function authedFetch(url, opts = {}) {
   const headers = { ...(opts.headers || {}), 'x-client-id': clientId() };
-  const key = getStoredKey();
-  if (key) headers['x-gemini-key'] = key;
+  const keys = getStoredKeys();
+  if (keys.length) headers['x-gemini-key'] = keys.join(',');
   return fetch(url, { ...opts, headers });
 }
 
-// Remove the key from this device (there is nothing stored on the server).
+// Render the saved-keys list in the gate, with remove buttons and a Continue
+// button once at least one key is present.
+function renderKeyList() {
+  const list = $('#keyList');
+  if (!list) return;
+  const keys = getStoredKeys();
+  list.innerHTML = '';
+  keys.forEach((k, i) => {
+    const li = document.createElement('li');
+    li.className = 'key-row';
+    const label = document.createElement('span');
+    label.className = 'key-mask';
+    label.textContent = i === 0 ? `${maskKey(k)}  (primary)` : `${maskKey(k)}  (backup ${i})`;
+    const rm = document.createElement('button');
+    rm.className = 'ghost small';
+    rm.textContent = 'Remove';
+    rm.addEventListener('click', () => {
+      setStoredKeys(getStoredKeys().filter((x) => x !== k));
+      renderKeyList();
+      if (!hasStoredKey()) {
+        $('#account').classList.add('hidden');
+        $('#modeSwitch').classList.add('hidden');
+        $('#keyStatus').textContent = 'All keys removed from this device.';
+      }
+    });
+    li.append(label, rm);
+    list.appendChild(li);
+  });
+  $('#keyDoneBtn').classList.toggle('hidden', keys.length === 0);
+  $('#saveKeyBtn').textContent = keys.length ? 'Add backup key' : 'Add key';
+}
+
+// Remove all keys from this device (there is nothing stored on the server).
 $('#removeKeyBtn').addEventListener('click', () => {
-  localStorage.removeItem(KEY_LS);
+  setStoredKeys([]);
   $('#account').classList.add('hidden');
   $('#modeSwitch').classList.add('hidden');
   $('#keyInput').value = '';
-  $('#keyStatus').textContent = 'Key removed from this device.';
+  $('#keyStatus').textContent = 'All keys removed from this device.';
   showGate('key');
+  renderKeyList();
 });
 
+// Manage keys (add backups / remove) — reopens the gate as a key manager.
 $('#changeKeyBtn').addEventListener('click', () => {
   $('#keyInput').value = '';
   $('#keyStatus').textContent = '';
   showGate('key');
+  renderKeyList();
+});
+
+// Continue from the key manager into the app once at least one key is saved.
+$('#keyDoneBtn').addEventListener('click', () => {
+  if (!hasStoredKey()) return;
+  $('#account').classList.remove('hidden');
+  $('#modeSwitch').classList.remove('hidden');
+  showChooser();
 });
 
 // Step-indicator navigation (both mode lists).
@@ -253,7 +322,8 @@ function setMode(mode) {
 // Boot: no login. If this browser already has a key, go straight to the app;
 // otherwise show the key gate.
 function boot() {
-  if (getStoredKey()) afterAuth();
+  renderKeyList();
+  if (hasStoredKey()) afterAuth();
   else showGate('key');
 }
 
@@ -276,26 +346,35 @@ async function afterAuth() {
 $('#saveKeyBtn').addEventListener('click', async () => {
   const apiKey = $('#keyInput').value.trim();
   if (!apiKey) return;
+  if (getStoredKeys().includes(apiKey)) {
+    $('#keyStatus').textContent = 'That key is already added.';
+    return;
+  }
+  const btn = $('#saveKeyBtn');
+  btn.disabled = true;
   $('#keyStatus').textContent = 'Validating…';
   try {
-    const res = await authedFetch('/api/me/key', {
+    // Validate this one key on its own (send just it, not the whole list).
+    const res = await fetch('/api/me/key', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-client-id': clientId(), 'x-gemini-key': apiKey },
       body: JSON.stringify({ apiKey }),
     });
     if (!res.ok) {
       $('#keyStatus').textContent = parseErr(await res.text());
       return;
     }
-    // Validated: keep it on this device only and reveal the mode chooser.
-    localStorage.setItem(KEY_LS, apiKey);
+    // Validated: append it to this device's key list (backups included).
+    setStoredKeys([...getStoredKeys(), apiKey]);
     $('#keyInput').value = '';
-    $('#keyStatus').textContent = '';
+    $('#keyStatus').textContent = 'Key added. Add another as a backup, or Continue.';
     $('#account').classList.remove('hidden');
     $('#modeSwitch').classList.remove('hidden');
-    showChooser();
+    renderKeyList();
   } catch (err) {
     $('#keyStatus').textContent = 'Failed: ' + err.message;
+  } finally {
+    btn.disabled = false;
   }
 });
 

@@ -176,6 +176,20 @@ button:hover { filter: brightness(1.08); }
 .or-sep::before { left: 0; } .or-sep::after { right: 0; }
 #keyStatus { margin-top: 12px; }
 
+/* Key manager: saved keys + add/backup */
+.key-list { list-style: none; margin: 12px 0 0; padding: 0; text-align: left; }
+.key-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px; margin-bottom: 8px; border: 1px solid var(--border);
+  border-radius: 10px; background: #11141b;
+}
+.key-mask { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--text); }
+.key-add { display: flex; gap: 8px; align-items: stretch; }
+.key-add input[type="password"] { flex: 1; margin: 16px 0; }
+.key-add .primary { margin: 16px 0; white-space: nowrap; }
+.key-hint { text-align: left; font-size: 12px; margin: 4px 0 0; }
+#keyDoneBtn { display: block; width: 100%; margin-top: 14px; }
+
 /* History overlay */
 .overlay {
   position: fixed; inset: 0; z-index: 50;

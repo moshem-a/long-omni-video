@@ -61,6 +61,40 @@ export function isFallbackError(err) {
   return TRANSIENT.test(msg) || NOT_FOUND.test(msg) || PERMANENT_QUOTA.test(msg);
 }
 
+// An invalid / expired / forbidden key won't work no matter how many retries —
+// but a BACKUP key might, so this is a "try the next key" (not next model) signal.
+const INVALID_KEY = /API key not valid|API_KEY_INVALID|API key expired|invalid api key|PERMISSION_DENIED|permission denied|\b401\b|\b403\b/i;
+
+// Users may store several keys as backups (e.g. one free + one with billing) so
+// that when one is exhausted the app can fall through to the next. They travel as
+// a single comma/newline-separated string; split into an ordered, unique list.
+export function parseKeys(raw) {
+  return [...new Set(String(raw || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean))];
+}
+
+// Run `op(key)` against each stored key in turn, moving to the next key when the
+// current one is over quota, overloaded, unavailable, or invalid. The first key
+// that succeeds wins; if all fail the last error is thrown. This is the backup-key
+// safety net — a single key just runs `op` once.
+export async function withKeys(keys, op, { label = 'gemini' } = {}) {
+  const list = parseKeys(keys);
+  if (!list.length) throw new Error('No Gemini API key available for this request');
+  let last;
+  for (let i = 0; i < list.length; i++) {
+    try {
+      if (i > 0) log.warn({ label, keyIndex: i, keys: list.length }, 'trying backup Gemini key');
+      return await op(list[i]);
+    } catch (err) {
+      last = err;
+      const msg = String(err?.message || err);
+      const canTryNext = i < list.length - 1 && (isFallbackError(err) || INVALID_KEY.test(msg));
+      if (!canTryNext) throw err;
+      log.warn({ label, keyIndex: i, err: msg.slice(0, 160) }, 'Gemini key failed; trying backup key');
+    }
+  }
+  throw last;
+}
+
 // Call generateContent across a list of models: retry transient errors per model,
 // and if a model stays overloaded (503) or is unavailable (404), fall back to the
 // next model in the chain. Non-transient errors (e.g. 400 bad key) throw at once.
@@ -157,35 +191,35 @@ Return strictly the JSON matching the schema.`;
 
 // Analyze a video file. Chooses File API vs inline based on size/duration.
 export async function analyzeVideo(apiKey, filePath, { sizeBytes = 0, durationSec = 0 } = {}) {
-  const ai = client(apiKey);
-  const useFileApi = sizeBytes > FILE_API_SIZE_BYTES || durationSec > FILE_API_DURATION_SEC;
+  return withKeys(apiKey, async (key) => {
+    const ai = client(key);
+    const useFileApi = sizeBytes > FILE_API_SIZE_BYTES || durationSec > FILE_API_DURATION_SEC;
 
-  let videoPart;
-  if (useFileApi) {
-    const file = await uploadAndWait(ai, filePath, 'video/mp4');
-    videoPart = { fileData: { fileUri: file.uri, mimeType: file.mimeType || 'video/mp4' } };
-  } else {
-    const data = fs.readFileSync(filePath).toString('base64');
-    videoPart = { inlineData: { mimeType: 'video/mp4', data } };
-  }
+    let videoPart;
+    if (useFileApi) {
+      const file = await uploadAndWait(ai, filePath, 'video/mp4');
+      videoPart = { fileData: { fileUri: file.uri, mimeType: file.mimeType || 'video/mp4' } };
+    } else {
+      const data = fs.readFileSync(filePath).toString('base64');
+      videoPart = { inlineData: { mimeType: 'video/mp4', data } };
+    }
 
-  log.info({ useFileApi }, 'requesting video analysis');
-  const res = await generateWithFallback(ai, ANALYSIS_CHAIN, {
-    contents: [{ role: 'user', parts: [videoPart, { text: ANALYSIS_PROMPT }] }],
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: ANALYSIS_SCHEMA,
-    },
-  }, 'analyze');
+    log.info({ useFileApi }, 'requesting video analysis');
+    const res = await generateWithFallback(ai, ANALYSIS_CHAIN, {
+      contents: [{ role: 'user', parts: [videoPart, { text: ANALYSIS_PROMPT }] }],
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: ANALYSIS_SCHEMA,
+      },
+    }, 'analyze');
 
-  const text = res.text;
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (e) {
-    throw new Error(`Failed to parse analysis JSON: ${e.message}\n${text?.slice(0, 500)}`);
-  }
-  return parsed;
+    const text = res.text;
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error(`Failed to parse analysis JSON: ${e.message}\n${text?.slice(0, 500)}`);
+    }
+  }, { label: 'analyze' });
 }
 
 async function ttsOnce(ai, model, text, voiceName) {
@@ -205,18 +239,25 @@ async function ttsOnce(ai, model, text, voiceName) {
 // TTS model, then the fallback, since preview TTS models occasionally return text
 // instead of audio.
 export async function synthesizeSpeech(apiKey, text, voiceName) {
-  const ai = client(apiKey);
-  const models = [MODELS.tts, MODELS.ttsFallback].filter(Boolean);
-  for (const model of models) {
-    try {
-      const buf = await ttsOnce(ai, model, text, voiceName);
-      if (buf) return buf;
-      log.warn({ model }, 'TTS returned no audio; trying next model');
-    } catch (err) {
-      log.warn({ model, err: String(err?.message || err).slice(0, 160) }, 'TTS call failed; trying next model');
+  return withKeys(apiKey, async (key) => {
+    const ai = client(key);
+    const models = [MODELS.tts, MODELS.ttsFallback].filter(Boolean);
+    let lastErr;
+    for (const model of models) {
+      try {
+        const buf = await ttsOnce(ai, model, text, voiceName);
+        if (buf) return buf;
+        log.warn({ model }, 'TTS returned no audio; trying next model');
+      } catch (err) {
+        lastErr = err;
+        log.warn({ model, err: String(err?.message || err).slice(0, 160) }, 'TTS call failed; trying next model');
+      }
     }
-  }
-  throw new Error('TTS produced no audio from any model');
+    // Surface the underlying error so withKeys can decide whether a backup key
+    // might help (quota/overload/invalid) rather than always giving up here.
+    if (lastErr) throw lastErr;
+    throw new Error('TTS produced no audio from any model');
+  }, { label: 'tts' });
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +297,10 @@ const STORYBOARD_SCHEMA = {
 // Each shot prompt embeds the locked character description so identity survives
 // even independent of Omni's stateful chaining.
 export async function generateStoryboard(apiKey, brief) {
+  return withKeys(apiKey, (key) => generateStoryboardOnce(key, brief), { label: 'storyboard' });
+}
+
+async function generateStoryboardOnce(apiKey, brief) {
   const ai = client(apiKey);
   const target = Math.min(60, Math.max(SHOT_MIN_SEC, Number(brief.targetDurationSec) || 30));
   const character = (brief.characterDesc || '').trim();
@@ -294,6 +339,10 @@ Return strictly JSON matching the schema.`;
 // Generate one portrait keyframe for a synthetic character; the PNG bytes become
 // the canonical subject-reference image reused on every shot. Returns a Buffer.
 export async function generateCharacterImage(apiKey, description) {
+  return withKeys(apiKey, (key) => generateCharacterImageOnce(key, description), { label: 'characterImage' });
+}
+
+async function generateCharacterImageOnce(apiKey, description) {
   const ai = client(apiKey);
   const res = await generateWithFallback(ai, IMAGE_CHAIN, {
     contents: [{

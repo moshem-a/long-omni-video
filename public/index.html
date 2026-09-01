@@ -42,9 +42,18 @@
         It's kept only in this browser (on this device) and sent with each request —
         never stored on our server. You can remove it any time.
       </p>
-      <input type="password" id="keyInput" placeholder="Paste your Gemini API key" autocomplete="off" />
-      <button id="saveKeyBtn" class="primary">Save key</button>
+      <ul class="key-list" id="keyList"></ul>
+      <div class="key-add">
+        <input type="password" id="keyInput" placeholder="Paste a Gemini API key" autocomplete="off" />
+        <button id="saveKeyBtn" class="primary">Add key</button>
+      </div>
+      <p class="muted key-hint">
+        Tip: add more than one key as automatic <strong>backups</strong>. If a key hits its
+        quota (e.g. Omni video is not on the free tier), the app falls back to the next
+        key — so a spare key with billing enabled keeps generation working.
+      </p>
       <div class="muted" id="keyStatus"></div>
+      <button id="keyDoneBtn" class="primary hidden">Continue →</button>
     </div>
   </section>
 

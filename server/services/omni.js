@@ -1,6 +1,6 @@
 import { MODELS, OMNI_ENDPOINT, OMNI_TIMEOUT_MS, OMNI_RESOLUTION } from '../config.js';
 import { log } from '../util/log.js';
-import { withRetry, isFallbackError } from './gemini.js';
+import { withRetry, isFallbackError, withKeys } from './gemini.js';
 
 // Primary Omni model + fallbacks, tried in order when one is over quota (free
 // tier is often limit 0), overloaded, or missing.
@@ -29,7 +29,14 @@ const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 // Generate a single shot. `refImages` is an array of {data:<base64>, mimeType}.
 // Returns { interactionId, buffer } with the raw mp4 bytes.
-export async function generateShot(apiKey, {
+export async function generateShot(apiKey, params) {
+  // Rotate over the user's backup keys: if one is over quota (Omni free tier is
+  // often limit 0) or invalid, fall through to the next. The whole interaction —
+  // POST plus the Files API download — runs under the one key that succeeds.
+  return withKeys(apiKey, (key) => generateShotOnce(key, params), { label: 'omni' });
+}
+
+async function generateShotOnce(apiKey, {
   prompt,
   refImages = [],
   previousInteractionId = null,
