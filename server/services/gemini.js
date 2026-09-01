@@ -29,6 +29,10 @@ function client(apiKey) {
 // limit, 500 INTERNAL — with exponential backoff + jitter. Non-transient errors
 // (e.g. 400 invalid key, 404 unknown model) throw immediately.
 const TRANSIENT = /\b(429|500|503)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|INTERNAL|overloaded|high demand|try again later/i;
+// A hard quota/billing block (free tier "limit: 0", exceeded quota) will not
+// recover by retrying — don't waste backoff on it, but DO fall back to another
+// model that may still have quota.
+const PERMANENT_QUOTA = /exceeded your current quota|limit:\s*0|check your plan and billing/i;
 export async function withRetry(fn, { tries = 5, baseMs = 900, label = 'gemini' } = {}) {
   let last;
   for (let attempt = 1; attempt <= tries; attempt++) {
@@ -37,7 +41,7 @@ export async function withRetry(fn, { tries = 5, baseMs = 900, label = 'gemini' 
     } catch (err) {
       last = err;
       const msg = String(err?.message || err);
-      if (attempt === tries || !TRANSIENT.test(msg)) throw err;
+      if (attempt === tries || !TRANSIENT.test(msg) || PERMANENT_QUOTA.test(msg)) throw err;
       const delay = Math.round(baseMs * 2 ** (attempt - 1) * (1 + Math.random() * 0.3));
       log.warn({ label, attempt, tries, delay, err: msg.slice(0, 160) }, 'transient Gemini error; retrying');
       await new Promise((r) => setTimeout(r, delay));
@@ -49,6 +53,13 @@ export async function withRetry(fn, { tries = 5, baseMs = 900, label = 'gemini' 
 // A model that is missing/unsupported (404) — fall back to the next model rather
 // than retrying the same one.
 const NOT_FOUND = /\b404\b|not found|NOT_FOUND|is not supported|no longer available/i;
+
+// Should this error make us try the NEXT model in a chain? True for overload,
+// rate limits, hard quota blocks, and missing models. (False for e.g. 400 bad key.)
+export function isFallbackError(err) {
+  const msg = String(err?.message || err);
+  return TRANSIENT.test(msg) || NOT_FOUND.test(msg) || PERMANENT_QUOTA.test(msg);
+}
 
 // Call generateContent across a list of models: retry transient errors per model,
 // and if a model stays overloaded (503) or is unavailable (404), fall back to the
@@ -63,10 +74,9 @@ async function generateWithFallback(ai, models, params, label) {
       return await withRetry(() => ai.models.generateContent({ ...params, model }), { label: `${label}:${model}` });
     } catch (err) {
       last = err;
-      const msg = String(err?.message || err);
       const hasNext = i < chain.length - 1;
-      if (!hasNext || !(TRANSIENT.test(msg) || NOT_FOUND.test(msg))) throw err;
-      log.warn({ label, model, err: msg.slice(0, 160) }, 'model unavailable; trying fallback');
+      if (!hasNext || !isFallbackError(err)) throw err;
+      log.warn({ label, model, err: String(err?.message || err).slice(0, 160) }, 'model unavailable; trying fallback');
     }
   }
   throw last;

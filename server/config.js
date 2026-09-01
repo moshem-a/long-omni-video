@@ -36,6 +36,9 @@ export const MODELS = {
   ttsFallback: 'gemini-2.5-pro-preview-tts',
   // Generative "Generate a video" mode:
   omni: process.env.OMNI_MODEL || 'gemini-omni-1.1-flash', // per-shot text/image/reference -> video
+  // Fallback when Omni 1.1 is over quota (free tier is often limit 0) or missing.
+  omniFallbacks: (process.env.OMNI_FALLBACKS || 'gemini-omni-1.0-flash,gemini-omni-flash-preview')
+    .split(',').map((s) => s.trim()).filter(Boolean),
   image: process.env.IMAGE_MODEL || 'gemini-3.7-flash-image', // synthetic character keyframe (subject ref)
   imageFallbacks: (process.env.IMAGE_FALLBACKS || 'gemini-2.5-flash-image')
     .split(',').map((s) => s.trim()).filter(Boolean),

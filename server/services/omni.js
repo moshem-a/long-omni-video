@@ -1,6 +1,10 @@
 import { MODELS, OMNI_ENDPOINT, OMNI_TIMEOUT_MS, OMNI_RESOLUTION } from '../config.js';
 import { log } from '../util/log.js';
-import { withRetry } from './gemini.js';
+import { withRetry, isFallbackError } from './gemini.js';
+
+// Primary Omni model + fallbacks, tried in order when one is over quota (free
+// tier is often limit 0), overloaded, or missing.
+const OMNI_CHAIN = [...new Set([MODELS.omni, ...(MODELS.omniFallbacks || [])].filter(Boolean))];
 
 // Gemini Omni 1.1 ("Generate a video") client. The interactions endpoint is not
 // exposed by the @google/genai SDK yet, so we call the REST API directly.
@@ -38,10 +42,9 @@ export async function generateShot(apiKey, {
     ...refImages.map((img) => ({ type: 'image', data: img.data, mime_type: img.mimeType || 'image/png' })),
     { type: 'text', text: `${prompt}\n\nSingle unbroken continuous shot. No scene cuts.` },
   ];
-  const body = {
-    model: MODELS.omni,
+  const baseBody = {
     input,
-    // delivery:'uri' asks Omni 1.1 to hand back a Files API uri (robust for the
+    // delivery:'uri' asks Omni to hand back a Files API uri (robust for the
     // larger 720p+ clips) rather than a multi-MB inline base64 blob.
     response_format: { type: 'video', aspect_ratio: aspectRatio, resolution: OMNI_RESOLUTION, delivery: 'uri' },
     generation_config: { video_config: { task } },
@@ -50,13 +53,31 @@ export async function generateShot(apiKey, {
   // mutually exclusive). Every shot uses a task, so we never chain; cross-shot
   // identity is instead carried by re-sending the same subject-reference images
   // and embedding the character description in each shot's prompt.
-  if (previousInteractionId && !task) body.previous_interaction_id = previousInteractionId;
+  if (previousInteractionId && !task) baseBody.previous_interaction_id = previousInteractionId;
 
   log.info(
-    { task, aspectRatio, refs: refImages.length, chained: Boolean(body.previous_interaction_id) },
+    { task, aspectRatio, refs: refImages.length, chained: Boolean(baseBody.previous_interaction_id) },
     'omni: generating shot'
   );
-  const json = await withRetry(() => postJson(OMNI_ENDPOINT, apiKey, body), { label: 'omni:shot', tries: 5 });
+
+  // Try each Omni model in the chain; fall back on quota/overload/missing.
+  let json, last;
+  for (let i = 0; i < OMNI_CHAIN.length; i++) {
+    const model = OMNI_CHAIN[i];
+    try {
+      if (i > 0) log.warn({ model }, 'omni: falling back to next model');
+      json = await withRetry(() => postJson(OMNI_ENDPOINT, apiKey, { model, ...baseBody }), {
+        label: `omni:${model}`,
+        tries: 4,
+      });
+      break;
+    } catch (err) {
+      last = err;
+      if (i < OMNI_CHAIN.length - 1 && isFallbackError(err)) continue;
+      throw err;
+    }
+  }
+  if (!json) throw last;
 
   const interactionId = json.id || json.interaction_id || json.name || null;
   const video = findVideo(json);
