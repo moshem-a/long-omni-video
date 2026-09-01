@@ -55,7 +55,7 @@
   <text class="t title" x="366" y="280" font-size="13">✂️ Edit pipeline</text>
   <rect x="366" y="292" width="136" height="40" rx="8" fill="#11141b"/>
   <text class="t" x="378" y="310" font-size="12">Analyze</text>
-  <text class="m" x="378" y="325" font-size="10">gemini-3.6-flash</text>
+  <text class="m" x="378" y="325" font-size="10">gemini-3.7-flash</text>
   <rect x="366" y="342" width="136" height="40" rx="8" fill="#11141b"/>
   <text class="t" x="378" y="360" font-size="12">TTS voiceover</text>
   <text class="m" x="378" y="375" font-size="10">3.1-flash-tts</text>
@@ -69,7 +69,7 @@
   <text class="t title" x="538" y="280" font-size="13">🎬 Generate pipeline</text>
   <rect x="538" y="292" width="136" height="40" rx="8" fill="#11141b"/>
   <text class="t" x="550" y="310" font-size="12">Storyboard</text>
-  <text class="m" x="550" y="325" font-size="10">gemini-3.6-flash</text>
+  <text class="m" x="550" y="325" font-size="10">gemini-3.7-flash</text>
   <rect x="538" y="342" width="136" height="42" rx="8" fill="#241d33" stroke="#8a6dff"/>
   <text class="t" x="550" y="360" font-size="12">Per-shot video</text>
   <text class="m" x="550" y="376" font-size="10" fill="#d3c2ff">Omni 1.1</text>
@@ -99,8 +99,8 @@
   <rect class="card2" x="802" y="298" width="190" height="86" rx="10" stroke="#8a6dff"/>
   <text class="t" x="816" y="320" font-size="13">Gemini API</text>
   <text class="m" x="816" y="336" font-size="11" fill="#d3c2ff">Omni 1.1 (video)</text>
-  <text class="m" x="816" y="352" font-size="11">3.6-flash (text)</text>
-  <text class="m" x="816" y="368" font-size="11">2.5-flash-image · 3.1-tts</text>
+  <text class="m" x="816" y="352" font-size="11">3.7-flash (text)</text>
+  <text class="m" x="816" y="368" font-size="11">3.7-flash-image · 3.1-tts</text>
 
   <!-- Edges -->
   <path class="edge-a" d="M258 200 H330" marker-end="url(#arw)"/>

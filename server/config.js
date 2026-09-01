@@ -27,12 +27,12 @@ export const DEV_NO_AUTH = process.env.DEV_NO_AUTH === '1';
 // instead of audio ("Model tried to generate text"); 3.1-flash-tts is reliable,
 // with pro-tts as a fallback.
 export const MODELS = {
-  analysis: 'gemini-3.6-flash',
+  analysis: process.env.ANALYSIS_MODEL || 'gemini-3.7-flash',
   tts: 'gemini-3.1-flash-tts-preview',
   ttsFallback: 'gemini-2.5-pro-preview-tts',
   // Generative "Generate a video" mode:
   omni: process.env.OMNI_MODEL || 'gemini-omni-1.1-flash', // per-shot text/image/reference -> video
-  image: process.env.IMAGE_MODEL || 'gemini-2.5-flash-image', // synthetic character keyframe (subject ref)
+  image: process.env.IMAGE_MODEL || 'gemini-3.7-flash-image', // synthetic character keyframe (subject ref)
 };
 
 // "Generate a video" (Omni) mode. A minute is built from several short shots
