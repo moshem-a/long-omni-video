@@ -1,5 +1,6 @@
 import { MODELS, OMNI_ENDPOINT, OMNI_TIMEOUT_MS, OMNI_RESOLUTION } from '../config.js';
 import { log } from '../util/log.js';
+import { withRetry } from './gemini.js';
 
 // Gemini Omni 1.1 ("Generate a video") client. The interactions endpoint is not
 // exposed by the @google/genai SDK yet, so we call the REST API directly.
@@ -55,7 +56,7 @@ export async function generateShot(apiKey, {
     { task, aspectRatio, refs: refImages.length, chained: Boolean(body.previous_interaction_id) },
     'omni: generating shot'
   );
-  const json = await postJson(OMNI_ENDPOINT, apiKey, body);
+  const json = await withRetry(() => postJson(OMNI_ENDPOINT, apiKey, body), { label: 'omni:shot', tries: 5 });
 
   const interactionId = json.id || json.interaction_id || json.name || null;
   const video = findVideo(json);

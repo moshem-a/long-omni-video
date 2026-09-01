@@ -25,14 +25,35 @@ function client(apiKey) {
   return c;
 }
 
+// Retry transient Gemini errors — 503 UNAVAILABLE ("high demand"), 429 rate
+// limit, 500 INTERNAL — with exponential backoff + jitter. Non-transient errors
+// (e.g. 400 invalid key, 404 unknown model) throw immediately.
+const TRANSIENT = /\b(429|500|503)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|INTERNAL|overloaded|high demand|try again later/i;
+export async function withRetry(fn, { tries = 5, baseMs = 900, label = 'gemini' } = {}) {
+  let last;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      last = err;
+      const msg = String(err?.message || err);
+      if (attempt === tries || !TRANSIENT.test(msg)) throw err;
+      const delay = Math.round(baseMs * 2 ** (attempt - 1) * (1 + Math.random() * 0.3));
+      log.warn({ label, attempt, tries, delay, err: msg.slice(0, 160) }, 'transient Gemini error; retrying');
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw last;
+}
+
 // Cheap call to confirm a key works before we store it.
 export async function validateKey(apiKey) {
   try {
-    await client(apiKey).models.generateContent({
+    await withRetry(() => client(apiKey).models.generateContent({
       model: MODELS.analysis,
       contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
       config: { maxOutputTokens: 1 },
-    });
+    }), { label: 'validateKey', tries: 3 });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err?.message || err).slice(0, 200) };
@@ -111,14 +132,14 @@ export async function analyzeVideo(apiKey, filePath, { sizeBytes = 0, durationSe
   }
 
   log.info({ useFileApi }, 'requesting video analysis');
-  const res = await ai.models.generateContent({
+  const res = await withRetry(() => ai.models.generateContent({
     model: MODELS.analysis,
     contents: [{ role: 'user', parts: [videoPart, { text: ANALYSIS_PROMPT }] }],
     config: {
       responseMimeType: 'application/json',
       responseSchema: ANALYSIS_SCHEMA,
     },
-  });
+  }), { label: 'analyze' });
 
   const text = res.text;
   let parsed;
@@ -131,14 +152,14 @@ export async function analyzeVideo(apiKey, filePath, { sizeBytes = 0, durationSe
 }
 
 async function ttsOnce(ai, model, text, voiceName) {
-  const res = await ai.models.generateContent({
+  const res = await withRetry(() => ai.models.generateContent({
     model,
     contents: [{ role: 'user', parts: [{ text }] }],
     config: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
     },
-  });
+  }), { label: `tts:${model}`, tries: 3 });
   const part = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
   return part ? Buffer.from(part.inlineData.data, 'base64') : null;
 }
@@ -214,11 +235,11 @@ Break this into a sequence of ${SHOT_MIN_SEC}-${SHOT_MAX_SEC} second shots whose
 
 Return strictly JSON matching the schema.`;
 
-  const res = await ai.models.generateContent({
+  const res = await withRetry(() => ai.models.generateContent({
     model: MODELS.analysis,
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: { responseMimeType: 'application/json', responseSchema: STORYBOARD_SCHEMA },
-  });
+  }), { label: 'storyboard' });
   let parsed;
   try {
     parsed = JSON.parse(res.text);
@@ -238,7 +259,7 @@ Return strictly JSON matching the schema.`;
 // the canonical subject-reference image reused on every shot. Returns a Buffer.
 export async function generateCharacterImage(apiKey, description) {
   const ai = client(apiKey);
-  const res = await ai.models.generateContent({
+  const res = await withRetry(() => ai.models.generateContent({
     model: MODELS.image,
     contents: [{
       role: 'user',
@@ -246,7 +267,7 @@ export async function generateCharacterImage(apiKey, description) {
         text: `A single, well-lit reference portrait photo of this character, neutral background, looking at camera, photorealistic: ${description}`,
       }],
     }],
-  });
+  }), { label: 'characterImage' });
   const part = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
   if (!part) throw new Error('Character image model returned no image');
   return Buffer.from(part.inlineData.data, 'base64');
