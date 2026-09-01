@@ -6,3 +6,5 @@ node_modules/
 /out/
 *.log
 .DS_Store
+# Belongs to the separate Interview Studio project, not this repo.
+/interview-studio-medium-post.html
